@@ -96,6 +96,31 @@ with st.sidebar:
     
     st.divider()
     
+    
+    # Bouton d'activation du Franc Suisse (sauvegardé en BDD)
+    new_show_chf = st.toggle("🇨🇭 Devise Suisse (CHF)", value=profile.show_chf)
+    if new_show_chf != profile.show_chf and user["authenticated"]:
+        profile.show_chf = new_show_chf
+        db.commit()
+        st.rerun()
+        
+    st.divider()
+    
+    # Bouton d'export des données
+    if st.button("📥 Exporter en CSV"):
+        data = db.query(Record).join(Account).filter(Account.user_id == user["username"]).all()
+        df_export = pd.DataFrame([{
+            "Date": r.date_releve, 
+            "Banque": r.account.bank_name,
+            "Type": r.account.account_type,
+            "Valeur": r.total_value,
+            "Devise": r.account.currency
+        } for r in data])
+        csv = df_export.to_csv(index=False).encode('utf-8')
+        st.download_button("Confirmer le téléchargement", data=csv, file_name=f"aura_export_{user['username']}.csv")
+
+    st.divider()
+    
     # --- ZONE DE DANGER : WIPE DATA ---
     st.markdown("### ⚠️ Zone de danger")
     if st.button("🚨 Réinitialiser mes données", type="primary"):
@@ -123,28 +148,6 @@ with st.sidebar:
         if col_no.button("❌ Annuler"):
             st.session_state["confirm_wipe"] = False
             st.rerun()
-    
-    # Bouton d'activation du Franc Suisse (sauvegardé en BDD)
-    new_show_chf = st.toggle("🇨🇭 Devise Suisse (CHF)", value=profile.show_chf)
-    if new_show_chf != profile.show_chf and user["authenticated"]:
-        profile.show_chf = new_show_chf
-        db.commit()
-        st.rerun()
-        
-    st.divider()
-    
-    # Bouton d'export des données
-    if st.button("📥 Exporter en CSV"):
-        data = db.query(Record).join(Account).filter(Account.user_id == user["username"]).all()
-        df_export = pd.DataFrame([{
-            "Date": r.date_releve, 
-            "Banque": r.account.bank_name,
-            "Type": r.account.account_type,
-            "Valeur": r.total_value,
-            "Devise": r.account.currency
-        } for r in data])
-        csv = df_export.to_csv(index=False).encode('utf-8')
-        st.download_button("Confirmer le téléchargement", data=csv, file_name=f"aura_export_{user['username']}.csv")
 
 # --- LOGIQUE DES PAGES ---
 
