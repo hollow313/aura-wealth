@@ -23,7 +23,7 @@ jobs:
           context: .
           push: true
           # Remplace par ton pseudo Docker Hub
-          tags: ton-pseudo/aura-wealth:latest 
+          tags: holloow313/aura-wealth:latest 
 
       - name: 🔔 Image digest
         run: echo ${{ steps.docker_build.outputs.digest }}
