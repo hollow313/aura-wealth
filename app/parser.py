@@ -4,23 +4,22 @@ from google import genai
 
 def check_quota_and_parse(pdf_path, api_key):
     if not api_key:
-        return {"error": "Clé API Gemini introuvable."}
-    
-    key_prefix = api_key[:4]
+        return {"error": "Clé API Gemini introuvable dans TrueNAS."}
     
     try:
-        # On garde le nouveau client
+        # Initialisation du client
         client = genai.Client(api_key=api_key)
         
-        # 1. Envoi du fichier
+        # 1. Envoi du PDF
         file_upload = client.files.upload(file=pdf_path)
         
-        # 2. On laisse 10 secondes (mieux vaut trop que pas assez)
-        time.sleep(10)
+        # 2. On attend que le fichier soit "Ready" côté Google
+        # Pour les modèles Lite, 5 à 10 secondes sont idéales.
+        time.sleep(8)
         
         prompt = """
-        Tu es un expert comptable. Analyse ce document PDF.
-        Extrais les informations suivantes au format JSON pur :
+        Tu es un analyseur de documents financier. 
+        Extrais les données de ce PDF et réponds UNIQUEMENT avec ce JSON :
         {
             "bank_name": "Nom de la banque",
             "account_type": "PEA ou Assurance-Vie ou Livret",
@@ -28,29 +27,27 @@ def check_quota_and_parse(pdf_path, api_key):
             "currency": "EUR",
             "date": "YYYY-MM-DD"
         }
-        Ne réponds rien d'autre que le JSON.
         """
         
-        # 3. ON FORCE LE MODÈLE 1.5-FLASH (Le plus généreux en quota gratuit)
+        # 3. APPEL AU MODÈLE GEMINI 2.5 FLASH-LITE
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash-lite',
             contents=[prompt, file_upload]
         )
         
-        if not response or not response.text:
-             return {"error": "L'IA n'a pas pu générer de texte."}
+        if not response.text:
+            return {"error": "L'IA a répondu mais le texte est vide."}
 
-        # Nettoyage ultra-précis du JSON
+        # Nettoyage pour ne garder que le JSON
         raw_text = response.text.strip()
-        # On cherche le début { et la fin } au cas où l'IA ajoute du texte autour
-        start_idx = raw_text.find('{')
-        end_idx = raw_text.rfind('}') + 1
+        start = raw_text.find('{')
+        end = raw_text.rfind('}') + 1
         
-        if start_idx == -1 or end_idx == 0:
-            return {"error": f"L'IA n'a pas renvoyé de JSON valide : {raw_text[:100]}"}
+        if start == -1 or end == 0:
+            return {"error": "Format JSON non détecté dans la réponse de l'IA."}
             
-        json_str = raw_text[start_idx:end_idx]
-        return json.loads(json_str)
+        return json.loads(raw_text[start:end])
         
     except Exception as e:
-        return {"error": f"(Clé: {key_prefix}) Erreur d'analyse : {str(e)}"}
+        # On affiche l'erreur brute pour comprendre si c'est encore un problème de quota
+        return {"error": f"Erreur avec Gemini 2.5 : {str(e)}"}
