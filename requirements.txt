@@ -1,0 +1,14 @@
+# UI & Dashboard
+streamlit==1.32.0
+pandas==2.2.1
+plotly==5.20.0
+
+# Intelligence Artificielle
+google-generativeai==0.4.1
+
+# Base de données PostgreSQL
+SQLAlchemy==2.0.28
+psycopg2-binary==2.9.9
+
+# Utilitaires (Appels API Devises)
+requests==2.31.0
