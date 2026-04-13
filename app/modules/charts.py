@@ -9,11 +9,10 @@ def render_patrimoine_chart(user_id):
     accounts = db.query(Account).filter(Account.user_id == user_id).all()
     
     if not accounts:
-        st.info("Aucun compte trouvé. Ajoute un premier document pour commencer.")
+        st.info("Aucun compte trouvé. Ajoutez un premier document pour commencer.")
         db.close()
         return
 
-    # On récupère la dernière valeur connue pour chaque compte
     data = []
     for a in accounts:
         last_record = db.query(Record).filter(Record.account_id == a.id).order_by(Record.date_releve.desc()).first()
@@ -24,8 +23,11 @@ def render_patrimoine_chart(user_id):
     df = pd.DataFrame(data)
     
     if not df.empty:
+        # Couleurs Néon personnalisées !
+        neon_colors = ["#a855f7", "#6366f1", "#ec4899", "#3b82f6", "#14b8a6", "#f59e0b"]
         fig = px.pie(df, values='Valeur', names='Nom', hole=0.5, 
-                     color_discrete_sequence=px.colors.sequential.Indigo)
+                     color_discrete_sequence=neon_colors)
+        
         fig.update_layout(
             paper_bgcolor="rgba(0,0,0,0)", 
             plot_bgcolor="rgba(0,0,0,0)",
@@ -50,10 +52,8 @@ def render_account_history(account_id):
         
     df = pd.DataFrame([{"Date": r.date_releve, "Valeur": r.total_value} for r in records])
     
-    # Création d'une belle courbe lisse avec des marqueurs
     fig = px.line(df, x="Date", y="Valeur", markers=True, line_shape="spline")
     
-    # Design néon / sombre
     fig.update_traces(line_color="#a855f7", marker=dict(size=8, color="#6366f1"))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", 
