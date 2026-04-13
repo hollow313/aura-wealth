@@ -7,6 +7,12 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+class UserProfile(Base):
+    __tablename__ = 'user_profiles'
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, index=True)
+    show_chf = Column(Boolean, default=False)
+
 class GlobalSettings(Base):
     __tablename__ = 'settings'
     id = Column(Integer, primary_key=True)
