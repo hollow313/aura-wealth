@@ -96,6 +96,34 @@ with st.sidebar:
     
     st.divider()
     
+    # --- ZONE DE DANGER : WIPE DATA ---
+    st.markdown("### ⚠️ Zone de danger")
+    if st.button("🚨 Réinitialiser mes données", type="primary"):
+        st.session_state["confirm_wipe"] = True
+
+    if st.session_state.get("confirm_wipe", False):
+        st.warning("Cela supprimera DÉFINITIVEMENT tous vos comptes et PDF.")
+        col_yes, col_no = st.columns(2)
+        if col_yes.button("✔️ Confirmer"):
+            # 1. Nettoyage de la base de données
+            accounts = db.query(Account).filter(Account.user_id == user["username"]).all()
+            for acc in accounts:
+                db.delete(acc) # Grâce au "cascade=all", les records sont aussi effacés
+            db.commit()
+            
+            # 2. Nettoyage des PDF physiques stockés sur TrueNAS
+            user_dir = f"/app/storage/{user['username']}"
+            if os.path.exists(user_dir):
+                shutil.rmtree(user_dir)
+            
+            st.session_state["confirm_wipe"] = False
+            st.success("Toutes vos données ont été effacées.")
+            st.rerun()
+            
+        if col_no.button("❌ Annuler"):
+            st.session_state["confirm_wipe"] = False
+            st.rerun()
+    
     # Bouton d'activation du Franc Suisse (sauvegardé en BDD)
     new_show_chf = st.toggle("🇨🇭 Devise Suisse (CHF)", value=profile.show_chf)
     if new_show_chf != profile.show_chf and user["authenticated"]:
