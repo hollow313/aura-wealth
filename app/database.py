@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine, Column, Integer, Float, String, Date, ForeignKey
+# L'erreur venait d'ici : il manquait "Boolean" à la fin de cette première ligne !
+from sqlalchemy import create_engine, Column, Integer, Float, String, Date, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import os
 
@@ -6,12 +7,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:ton_mot_de_passe
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
-class UserProfile(Base):
-    __tablename__ = 'user_profiles'
-    id = Column(Integer, primary_key=True)
-    username = Column(String, unique=True, index=True)
-    show_chf = Column(Boolean, default=False)
 
 class GlobalSettings(Base):
     __tablename__ = 'settings'
@@ -36,7 +31,6 @@ class Account(Base):
     # Lien avec l'historique
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
-# --- LA TABLE MANQUANTE ---
 class Record(Base):
     __tablename__ = 'records'
     id = Column(Integer, primary_key=True)
@@ -45,6 +39,12 @@ class Record(Base):
     total_value = Column(Float)
     
     account = relationship("Account", back_populates="records")
+
+class UserProfile(Base):
+    __tablename__ = 'user_profiles'
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, index=True)
+    show_chf = Column(Boolean, default=False)
 
 # Cette ligne demande à SQLAlchemy de créer les tables automatiquement si elles n'existent pas
 Base.metadata.create_all(bind=engine)
