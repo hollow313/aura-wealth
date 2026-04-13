@@ -1,4 +1,5 @@
 import json
+import time
 from google import genai
 
 def check_quota_and_parse(pdf_path, api_key):
@@ -6,50 +7,46 @@ def check_quota_and_parse(pdf_path, api_key):
         return {"error": "Clé API Gemini introuvable."}
     
     try:
-        # On utilise le nouveau client officiel de Google
         client = genai.Client(api_key=api_key)
         
-        # Envoi sécurisé du PDF aux serveurs de Google
-        uploaded_file = client.files.upload(file=pdf_path)
+        # 1. Upload du fichier
+        file_upload = client.files.upload(path=pdf_path)
+        
+        # 2. Attendre que Google traite le fichier (Indispensable pour les gros PDF)
+        # On attend quelques secondes pour éviter le 404/Not Found
+        time.sleep(3) 
         
         prompt = """
-        Analyse ce relevé de compte bancaire.
-        Renvoie UNIQUEMENT un objet JSON pur avec ces clés exactes :
-        - bank_name (Nom de la banque)
-        - account_type (Type de compte : PEA, Assurance-Vie, Livret A, etc.)
-        - total_value (Nombre, la valeur totale du compte)
-        - currency (Devise : EUR, CHF, USD...)
-        - date (Format YYYY-MM-DD)
+        Tu es un expert comptable. Analyse ce document PDF.
+        Extrais les informations suivantes au format JSON pur :
+        {
+            "bank_name": "Nom de la banque",
+            "account_type": "PEA ou Assurance-Vie ou Livret",
+            "total_value": 1234.56,
+            "currency": "EUR",
+            "date": "YYYY-MM-DD"
+        }
+        Ne réponds rien d'autre que le JSON.
         """
         
-        # --- SYSTÈME ANTI-PLANTAGE (FALLBACK) ---
-        # On tente plusieurs modèles au cas où l'un d'eux soit bloqué ou saturé
-        models_to_try = ['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro']
-        response = None
-        last_error = ""
+        # 3. Appel au modèle le plus stable (on reste sur Flash 1.5 qui est le plus robuste en Free Tier)
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[prompt, file_upload]
+        )
         
-        for model_name in models_to_try:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[prompt, uploaded_file]
-                )
-                break # Si l'analyse réussit, on sort de la boucle !
-            except Exception as e:
-                last_error = str(e)
-                continue # Si ça échoue, on passe au modèle suivant
-        
-        if not response:
-            return {"error": f"Google a refusé l'analyse sur tous les modèles. Détail : {last_error}"}
+        if not response.text:
+            return {"error": "L'IA a renvoyé une réponse vide."}
 
-        # Nettoyage et extraction du JSON renvoyé par l'IA
-        raw_text = response.text.strip()
-        if raw_text.startswith("```json"):
-            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-        elif raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1].split("```")[0].strip()
+        # Nettoyage du texte pour extraire le JSON
+        clean_json = response.text.strip()
+        if "```json" in clean_json:
+            clean_json = clean_json.split("```json")[1].split("```")[0].strip()
+        elif "```" in clean_json:
+            clean_json = clean_json.split("```")[1].split("```")[0].strip()
             
-        return json.loads(raw_text)
+        return json.loads(clean_json)
         
     except Exception as e:
-        return {"error": f"Erreur critique IA : {str(e)}"}
+        # On simplifie l'erreur pour ne plus avoir de confusion
+        return {"error": f"Analyse interrompue : {str(e)}"}
