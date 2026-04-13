@@ -3,8 +3,8 @@ streamlit>=1.38.0
 pandas==2.2.1
 plotly==5.20.0
 
-# Intelligence Artificielle
-google-generativeai==0.4.1
+# Intelligence Artificielle (Mise à jour requise pour upload_file)
+google-generativeai>=0.5.4
 
 # Base de données PostgreSQL
 SQLAlchemy==2.0.28
