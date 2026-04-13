@@ -1,0 +1,10 @@
+[theme]
+base = "dark"
+primaryColor = "#6366f1" # Indigo moderne
+backgroundColor = "#0f172a" # Bleu nuit très profond (Slate 900)
+secondaryBackgroundColor = "#1e293b" # Slate 800 pour les cartes
+textColor = "#f8fafc"
+font = "sans serif"
+
+[server]
+enableStaticServing = true
