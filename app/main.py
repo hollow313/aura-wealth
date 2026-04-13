@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import shutil  # <--- Ajoute cette ligne ici
 from datetime import datetime
 
 # --- IMPORTS INTERNES ---
