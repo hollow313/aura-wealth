@@ -201,7 +201,7 @@ elif menu == "💳 Mes Comptes":
                     # Sauvegarde physique du PDF dans le dossier bindé TrueNAS
                     save_dir = f"/app/storage/{user['username']}/{acc.id}"
                     os.makedirs(save_dir, exist_ok=True)
-                    os.rename(temp_path, f"{save_dir}/{result['date']}.pdf")
+                    shutil.move(temp_path, f"{save_dir}/{result['date']}.pdf")
                     
                     db.commit()
                     st.success(f"Relevé {result['bank_name']} ajouté avec succès !")
