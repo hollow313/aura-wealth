@@ -1,0 +1,29 @@
+name: 🚀 Build and Push Aura Wealth
+
+on:
+  push:
+    branches: [ "main" ] # Déclenche le build à chaque push sur la branche main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: 🏗️ Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # Remplace par ton pseudo Docker Hub
+          tags: ton-pseudo/aura-wealth:latest 
+
+      - name: 🔔 Image digest
+        run: echo ${{ steps.docker_build.outputs.digest }}
