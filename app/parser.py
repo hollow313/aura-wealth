@@ -9,11 +9,12 @@ def check_quota_and_parse(pdf_path, api_key):
     try:
         client = genai.Client(api_key=api_key)
         
-        # C'est ici ! On utilise 'file=' et non 'path='
+        # 1. Envoi du fichier à Google
         file_upload = client.files.upload(file=pdf_path)
         
-        # On attend que le fichier soit digéré
-        time.sleep(3)
+        # 2. PAUSE STRATÉGIQUE (10 secondes)
+        # Google a besoin de temps pour traiter le PDF de son côté.
+        time.sleep(10)
         
         prompt = """
         Tu es un expert comptable. Analyse ce document PDF.
@@ -28,31 +29,21 @@ def check_quota_and_parse(pdf_path, api_key):
         Ne réponds rien d'autre que le JSON.
         """
         
-        models_to_try = ['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro']
-        last_error = ""
+        # 3. Appel direct au modèle stable (plus de boucle qui masque l'erreur)
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[prompt, file_upload]
+        )
         
-        for model_name in models_to_try:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[prompt, file_upload]
-                )
-                
-                clean_json = response.text.strip()
-                if "```json" in clean_json:
-                    clean_json = clean_json.split("```json")[1].split("```")[0].strip()
-                elif "```" in clean_json:
-                    clean_json = clean_json.split("```")[1].split("```")[0].strip()
-                    
-                # Dès qu'on a le JSON, on retourne le résultat (pas de bandeau rouge)
-                return json.loads(clean_json)
-                
-            except Exception as e:
-                last_error = str(e)
-                continue # On essaye le modèle suivant
-                
-        # Si on sort de la boucle sans rien, c'est que tous les modèles ont échoué
-        return {"error": f"Analyse refusée par l'IA. Détail : {last_error}"}
+        # 4. Nettoyage et extraction du JSON
+        clean_json = response.text.strip()
+        if "```json" in clean_json:
+            clean_json = clean_json.split("```json")[1].split("```")[0].strip()
+        elif "```" in clean_json:
+            clean_json = clean_json.split("```")[1].split("```")[0].strip()
+            
+        return json.loads(clean_json)
         
     except Exception as e:
-        return {"error": f"Erreur critique de lecture : {str(e)}"}
+        # S'il y a une erreur, on verra ENFIN la vraie !
+        return {"error": f"Erreur d'analyse : {str(e)}"}
