@@ -22,9 +22,9 @@ def check_quota_and_parse(pdf_path, api_key):
         - date (Format YYYY-MM-DD)
         """
         
-        # Appel du modèle Gemini 2.0 Flash
+        # Change gemini-2.0-flash par gemini-1.5-flash
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-1.5-flash',
             contents=[prompt, uploaded_file]
         )
         
