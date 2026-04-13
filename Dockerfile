@@ -20,7 +20,8 @@ RUN mkdir -p /var/run/postgresql && \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# On ajoute un délai de connexion plus long et 5 tentatives (retries)
+RUN pip install --no-cache-dir --default-timeout=100 --retries=5 -r requirements.txt
 
 COPY . .
 RUN chown -R apps:apps /app && chmod +x entrypoint.sh
