@@ -1,24 +1,31 @@
 #!/bin/bash
 set -e
 
-# 1. Tentative de changement de propriétaire (on ignore l'erreur si ça échoue)
-echo "🔍 Vérification des permissions..."
-chown -R postgres:postgres /var/lib/postgresql/data || echo "⚠️ Note: Impossible de changer le propriétaire (ACL ZFS), on continue quand même..."
+# Dossier de données Postgres
+PGDATA="/var/lib/postgresql/data"
 
-# 2. Initialisation de Postgres si le dossier est vide
-if [ ! -d "/var/lib/postgresql/data/base" ]; then
-    echo "🚀 Initialisation de la base de données..."
-    # On force l'initdb même si le chown a échoué, tant qu'on a le droit d'écriture
-    runuser -u postgres -- /usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/data
+echo "🔍 Vérification des accès pour l'utilisateur $(id -u)..."
+
+# On tente le chown mais on ne stoppe pas le script si ça échoue (erreur 1)
+chown -R postgres:postgres "$PGDATA" 2>/dev/null || echo "⚠️ Note: ACL ZFS détectées, passage outre le chown."
+
+# Si le dossier est vide, on initialise la DB
+if [ ! -d "$PGDATA/base" ]; then
+    echo "🚀 Initialisation de la base de données Aura Wealth..."
     
-    runuser -u postgres -- /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/data -w start
+    # On initialise en tant qu'utilisateur postgres
+    runuser -u postgres -- /usr/lib/postgresql/15/bin/initdb -D "$PGDATA"
     
-    echo "🔐 Configuration du mot de passe..."
+    # Démarrage temporaire pour configurer les accès
+    runuser -u postgres -- /usr/lib/postgresql/15/bin/pg_ctl -D "$PGDATA" -w start
+    
+    echo "🔐 Configuration des accès SQL..."
     runuser -u postgres -- psql -c "ALTER USER postgres WITH PASSWORD '$POSTGRES_PASSWORD';"
     runuser -u postgres -- psql -c "CREATE DATABASE aura_db;"
     
-    runuser -u postgres -- /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/data -m fast stop
+    # Arrêt propre
+    runuser -u postgres -- /usr/lib/postgresql/15/bin/pg_ctl -D "$PGDATA" -m fast stop
 fi
 
-echo "✅ Démarrage des services Aura..."
+echo "✅ Prêt ! Lancement de l'Aura via Supervisord..."
 exec /usr/bin/supervisord -c /app/supervisord.conf
