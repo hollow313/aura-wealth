@@ -1,8 +1,8 @@
 name: 🚀 Build and Push Aura Wealth
 
 on:
-  push:
-    branches: [ "main" ] # Déclenche le build à chaque push sur la branche main
+  #push:
+    #branches: [ "main" ] # Déclenche le build à chaque push sur la branche main
   workflow_dispatch:
 
 jobs:
