@@ -1,13 +1,26 @@
 #!/bin/bash
+set -e
 
-# Initialisation Postgres s'il est vide
+# 1. Gestion des permissions du dossier de données
+# On s'assure que le dossier appartient bien à l'utilisateur postgres
+chown -R postgres:postgres /var/lib/postgresql/data
+
+# 2. Initialisation de Postgres si le dossier est vide
 if [ ! -d "/var/lib/postgresql/data/base" ]; then
-    su - postgres -c "/usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/data"
-    echo "ALTER USER postgres WITH PASSWORD '$POSTGRES_PASSWORD';" | su - postgres -c "postgres --single -D /var/lib/postgresql/data"
+    echo "🚀 Initialisation de la base de données..."
+    runuser -u postgres -- /usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/data
     
-    # Création de la BDD et tables
-    su - postgres -c "psql -c \"CREATE DATABASE aura_db;\""
+    # Démarrage temporaire pour configurer l'utilisateur
+    runuser -u postgres -- /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/data -w start
+    
+    echo "🔐 Configuration du mot de passe et de la base..."
+    runuser -u postgres -- psql -c "ALTER USER postgres WITH PASSWORD '$POSTGRES_PASSWORD';"
+    runuser -u postgres -- psql -c "CREATE DATABASE aura_db;"
+    
+    # Arrêt du démarrage temporaire
+    runuser -u postgres -- /usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/data -m fast stop
 fi
 
-# Lance Supervisor qui gère Postgres et Streamlit
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+# 3. Lancement de Supervisor (Correction du chemin du fichier conf)
+echo "✅ Démarrage des services Aura..."
+exec /usr/bin/supervisord -c /app/supervisord.conf
