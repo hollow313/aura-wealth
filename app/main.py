@@ -3,9 +3,9 @@ import pandas as pd
 import os
 from datetime import datetime
 
-# Imports internes
+# --- IMPORTS INTERNES ---
+from database import SessionLocal, Account, Record, GlobalSettings, UserProfile
 from auth import get_user_info
-from database import SessionLocal, Account, Record, GlobalSettings
 from parser import check_quota_and_parse
 from admin import admin_page
 from modules.charts import render_patrimoine_chart, render_account_history
@@ -67,12 +67,26 @@ if not user["is_member"] and user["authenticated"]:
     st.error("🚫 Accès restreint. Vous devez faire partie du groupe 'assurance-vie' pour accéder aux données.")
     st.stop()
 
+db = SessionLocal()
+
+# --- GESTION DU PROFIL UTILISATEUR ---
+if user["authenticated"]:
+    # On cherche ou on crée le profil pour sauvegarder les préférences (ex: CHF)
+    profile = db.query(UserProfile).filter_by(username=user["username"]).first()
+    if not profile:
+        profile = UserProfile(username=user["username"], show_chf=False)
+        db.add(profile)
+        db.commit()
+else:
+    profile = UserProfile(username="DevMode", show_chf=True)
+
 # --- BARRE LATÉRALE ---
 with st.sidebar:
     st.title("🌌 Aura")
-    st.caption(f"Utilisateur : {user['username']}")
+    st.caption(f"Connecté : {user['username']}")
     st.divider()
     
+    # Menu dynamique selon les droits
     menu = st.radio(
         "Navigation",
         ["🌍 Vue Globale", "💳 Mes Comptes", "🚀 Simulation", "🛡️ Admin"] if user["is_admin"] 
@@ -80,9 +94,18 @@ with st.sidebar:
     )
     
     st.divider()
+    
+    # Bouton d'activation du Franc Suisse (sauvegardé en BDD)
+    new_show_chf = st.toggle("🇨🇭 Devise Suisse (CHF)", value=profile.show_chf)
+    if new_show_chf != profile.show_chf and user["authenticated"]:
+        profile.show_chf = new_show_chf
+        db.commit()
+        st.rerun()
+        
+    st.divider()
+    
+    # Bouton d'export des données
     if st.button("📥 Exporter en CSV"):
-        db = SessionLocal()
-        # On exporte uniquement les données de cet utilisateur
         data = db.query(Record).join(Account).filter(Account.user_id == user["username"]).all()
         df_export = pd.DataFrame([{
             "Date": r.date_releve, 
@@ -93,25 +116,23 @@ with st.sidebar:
         } for r in data])
         csv = df_export.to_csv(index=False).encode('utf-8')
         st.download_button("Confirmer le téléchargement", data=csv, file_name=f"aura_export_{user['username']}.csv")
-        db.close()
 
 # --- LOGIQUE DES PAGES ---
-
-db = SessionLocal()
 
 if menu == "🌍 Vue Globale":
     st.header("État de ton Patrimoine")
     
-    # Récupération du taux CHF (mis à jour par le worker en tache de fond)
+    # Récupération du taux de change
     settings = db.query(GlobalSettings).first()
     chf_rate = settings.chf_eur_rate if settings else 1.03
     
-    # Calcul des totaux consolidés
+    # Calcul des totaux
     accounts = db.query(Account).filter(Account.user_id == user["username"]).all()
     total_eur = 0
     total_chf = 0
     
     for acc in accounts:
+        # On prend la dernière valeur connue pour chaque compte
         last_record = db.query(Record).filter(Record.account_id == acc.id).order_by(Record.date_releve.desc()).first()
         if last_record:
             if acc.currency == "EUR":
@@ -119,12 +140,15 @@ if menu == "🌍 Vue Globale":
             else:
                 total_chf += last_record.total_value
 
-    total_consolidated = total_eur + (total_chf * chf_rate)
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Consolidé (€)", f"{total_consolidated:,.2f} €")
-    col2.metric("Part en Euros", f"{total_eur:,.2f} €")
-    col3.metric("Part en Francs Suisses", f"{total_chf:,.2f} CHF", delta=f"Taux: {chf_rate:.4f}")
+    # Affichage conditionnel selon le toggle CHF
+    if profile.show_chf:
+        total_consolidated = total_eur + (total_chf * chf_rate)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Consolidé (€)", f"{total_consolidated:,.2f} €")
+        col2.metric("Part en Euros", f"{total_eur:,.2f} €")
+        col3.metric("Part en Francs Suisses", f"{total_chf:,.2f} CHF", delta=f"Taux: {chf_rate:.4f}")
+    else:
+        st.metric("Total Patrimoine (€)", f"{total_eur:,.2f} €")
 
     st.divider()
     render_patrimoine_chart(user["username"])
@@ -132,23 +156,22 @@ if menu == "🌍 Vue Globale":
 elif menu == "💳 Mes Comptes":
     st.header("Gestion des Comptes")
     
-    # 1. AJOUT DE DOCUMENT
+    # 1. ZONE D'UPLOAD ET ANALYSE IA
     with st.expander("➕ Ajouter un nouveau relevé (PDF)"):
         uploaded_file = st.file_uploader("Glissez votre document ici", type="pdf")
         if uploaded_file:
-            # Sauvegarde physique du fichier
             temp_path = f"/tmp/{uploaded_file.name}"
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
             with st.spinner("Analyse Aura IA en cours..."):
+                # Envoi à l'API Gemini
                 result = check_quota_and_parse(temp_path, os.getenv("GEMINI_API_KEY"))
                 
                 if "error" in result:
                     st.error(result["error"])
                 else:
-                    # Logique de sauvegarde en BDD (Compte + Record)
-                    # On cherche si le compte existe déjà pour cet utilisateur
+                    # Recherche du compte ou création
                     acc = db.query(Account).filter(
                         Account.user_id == user["username"],
                         Account.bank_name == result["bank_name"],
@@ -166,7 +189,7 @@ elif menu == "💳 Mes Comptes":
                         db.commit()
                         db.refresh(acc)
 
-                    # Ajout du record
+                    # Ajout de l'enregistrement temporel
                     new_rec = Record(
                         account_id=acc.id,
                         date_releve=datetime.strptime(result["date"], "%Y-%m-%d"),
@@ -174,7 +197,7 @@ elif menu == "💳 Mes Comptes":
                     )
                     db.add(new_rec)
                     
-                    # Sauvegarde finale du fichier dans le stockage persistant
+                    # Sauvegarde physique du PDF dans le dossier bindé TrueNAS
                     save_dir = f"/app/storage/{user['username']}/{acc.id}"
                     os.makedirs(save_dir, exist_ok=True)
                     os.rename(temp_path, f"{save_dir}/{result['date']}.pdf")
@@ -183,7 +206,7 @@ elif menu == "💳 Mes Comptes":
                     st.success(f"Relevé {result['bank_name']} ajouté avec succès !")
                     st.rerun()
 
-    # 2. LISTE DES COMPTES
+    # 2. AFFICHAGE DE L'HISTORIQUE DES COMPTES
     accounts = db.query(Account).filter(Account.user_id == user["username"]).all()
     for acc in accounts:
         with st.container():
@@ -204,7 +227,6 @@ elif menu == "🚀 Simulation":
         
     with col2:
         st.subheader("Projection")
-        # Appel du module de calcul
         projection_data = calculate_compound_interest(capital_init, mensuel, duree, rendement/100)
         df_proj = pd.DataFrame(projection_data)
         
@@ -216,4 +238,5 @@ elif menu == "🚀 Simulation":
 elif menu == "🛡️ Admin":
     admin_page(user["username"])
 
+# --- NETTOYAGE ---
 db.close()
