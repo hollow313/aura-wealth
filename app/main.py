@@ -39,7 +39,7 @@ if not profile:
     db.add(profile); db.commit(); db.refresh(profile)
 
 with st.sidebar:
-    st.title("🌌 Aura Pro v3.0")
+    st.title("🌌 Aura Pro")
     st.write(f"Utilisateur : **{user['username']}**")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     st.divider()
