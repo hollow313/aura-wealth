@@ -11,16 +11,13 @@ class UserProfile(Base):
     __tablename__ = 'user_profiles'
     id = Column(Integer, primary_key=True)
     username = Column(String, unique=True, index=True)
-    # Paramètres
     active_currencies = Column(String, default="EUR")
-    # Quotas et Reset
-    token_limit_weekly = Column(Integer, default=100000) # Limite hebdo par user
-    token_used_weekly = Column(Integer, default=0)       # Compteur hebdo
-    token_used_daily = Column(Integer, default=0)        # Compteur jour (pour l'admin)
-    token_used_global = Column(Integer, default=0)       # Compteur à vie
+    token_limit_weekly = Column(Integer, default=100000)
+    token_used_weekly = Column(Integer, default=0)
+    token_used_daily = Column(Integer, default=0)
+    token_used_global = Column(Integer, default=0)
     last_daily_reset = Column(Date, nullable=True)
-    last_weekly_reset = Column(Integer, nullable=True)   # Numéro de semaine ISO
-    # Divers
+    last_weekly_reset = Column(Integer, nullable=True)
     notify_discord = Column(Boolean, default=False)
     discord_webhook = Column(Text, nullable=True)
 
@@ -35,6 +32,7 @@ class Account(Base):
     total_invested = Column(Float, default=0.0) 
     fiscal_date = Column(Date, nullable=True)
     management_profile = Column(String, nullable=True)
+    is_manual = Column(Boolean, default=False) # NOUVEAU : Identifie les livrets saisis à la main
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
 class Record(Base):
