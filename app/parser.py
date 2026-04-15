@@ -3,11 +3,14 @@ from google import genai
 
 def check_quota_and_parse(pdf_path, api_key):
     try:
+        print(f"\n🚀 [AURA LOG] DÉMARRAGE DE L'ANALYSE IA : {pdf_path}")
         client = genai.Client(api_key=api_key)
+        
+        print("🚀 [AURA LOG] Étape 1/4 : Upload du PDF vers Gemini...")
         file_upload = client.files.upload(file=pdf_path)
         
-        # Temps de repos pour éviter les erreurs de serveur Gemini
-        time.sleep(8) 
+        print("🚀 [AURA LOG] Étape 2/4 : Repos de 5 secondes pour sécuriser l'API...")
+        time.sleep(5) 
         
         prompt = """
         Tu es un expert en gestion de patrimoine. Analyse ce relevé financier (Assurance Vie, PEA, ou Epargne Salariale PEE/PEG/PER) et extrais ce JSON STRICTEMENT :
@@ -39,19 +42,35 @@ def check_quota_and_parse(pdf_path, api_key):
         Si une valeur est absente, mets 0.0 ou null. NE REPONDS QUE LE JSON.
         """
         
+        print("🚀 [AURA LOG] Étape 3/4 : Génération du contenu (Attente de la réponse de l'IA)...")
         response = client.models.generate_content(
             model='gemini-2.5-flash-lite',
             contents=[prompt, file_upload]
         )
         
+        print("🚀 [AURA LOG] Étape 4/4 : Réponse reçue ! Formatage du JSON...")
+        if not response.text:
+            print("❌ [AURA ERROR] Réponse vide de Gemini.")
+            return {"error": "L'IA n'a renvoyé aucune donnée (blocage de sécurité potentiel)."}
+
         usage = response.usage_metadata.total_token_count if hasattr(response, 'usage_metadata') else 0
         raw_text = response.text.strip()
-        start, end = raw_text.find('{'), raw_text.rfind('}') + 1
+        
+        start = raw_text.find('{')
+        end = raw_text.rfind('}') + 1
+        
+        if start == -1 or end == 0:
+            print(f"❌ [AURA ERROR] JSON introuvable dans la réponse : {raw_text[:100]}...")
+            return {"error": "Impossible d'extraire les données financières du document."}
+            
         data = json.loads(raw_text[start:end])
         data['tokens'] = usage
         if not data.get('currency'): data['currency'] = "EUR"
         if not data.get('positions'): data['positions'] = []
-            
+        
+        print("✅ [AURA LOG] Extraction terminée avec succès !")
         return data
+        
     except Exception as e:
-        return {"error": str(e)}
+        print(f"❌ [AURA CRITICAL ERROR] Le script a planté : {e}")
+        return {"error": f"Erreur critique lors de l'analyse : {str(e)}"}
