@@ -15,13 +15,13 @@ def check_quota_and_parse(pdf_path, api_key):
             "contract_number": "string",
             "date": "YYYY-MM-DD",
             "total_value": float,
-            "total_invested": float (Total versé depuis l'origine),
-            "total_withdrawn": float (Total racheté depuis l'origine),
-            "fonds_euro_value": float (Valeur de l'épargne sur le fonds en euros),
-            "uc_value": float (Valeur de l'épargne sur les unités de compte),
+            "total_invested": float (Total versé depuis l'origine, 0.0 si absent),
+            "total_withdrawn": float,
+            "fonds_euro_value": float,
+            "uc_value": float,
             "fiscal_date": "YYYY-MM-DD",
             "management_profile": "string",
-            "currency": "EUR",
+            "currency": "string" (Code à 3 lettres ex: EUR, CHF, USD),
             "dividends": float,
             "fees": float
         }
@@ -39,6 +39,11 @@ def check_quota_and_parse(pdf_path, api_key):
         end = raw_text.rfind('}') + 1
         data = json.loads(raw_text[start:end])
         data['tokens'] = usage
+        
+        # Sécurisation de la devise par défaut
+        if not data.get('currency'):
+            data['currency'] = "EUR"
+            
         return data
     except Exception as e:
         return {"error": str(e)}
