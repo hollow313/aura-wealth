@@ -23,17 +23,16 @@ with st.sidebar:
     st.title("🌌 Aura Pro")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     st.divider()
-    st.info(f"Tokens: {profile.token_used:,} / {profile.token_limit:,}")
+    st.metric("Consommation Tokens", f"{profile.token_used:,}", f"/ {profile.token_limit:,}")
 
 # --- PAGE : DASHBOARD ---
 if menu == "🌍 Dashboard":
     st.header("📈 Vue Globale du Patrimoine")
     accounts = db.query(Account).filter_by(user_id=user["username"]).all()
     
-    if not accounts:
-        st.info("Commencez par uploader un relevé dans 'Mes Comptes'.")
+    if not accounts or all(len(a.records) == 0 for a in accounts):
+        st.info("👋 Bienvenue ! Commencez par uploader un relevé dans l'onglet 'Mes Comptes'.")
     else:
-        # Calculs KPIs
         total_eur = 0
         total_div = 0
         perf_data = []
@@ -46,24 +45,32 @@ if menu == "🌍 Dashboard":
                 total_eur += val_now
                 total_div += sum(r.dividends for r in a.records)
                 
-                # Calcul Rendement
                 yield_total = ((val_now - val_start) / val_start * 100) if val_start > 0 else 0
-                perf_data.append({"Compte": a.bank_name, "Actuel": val_now, "Rendement": f"{yield_total:+.2f}%"})
+                perf_data.append({
+                    "Banque": a.bank_name, 
+                    "Type": a.account_type, 
+                    "Valeur Actuelle": f"{val_now:,.2f} €", 
+                    "Rendement": f"{yield_total:+.2f}%"
+                })
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Patrimoine Total", f"{total_eur:,.2f} €")
         m2.metric("Dividendes Perçus", f"{total_div:,.2f} €")
-        m3.metric("Nombre de Comptes", len(accounts))
+        m3.metric("Comptes Actifs", len(accounts))
         
-        render_patrimoine_chart(accounts)
-        st.table(pd.DataFrame(perf_data))
+        st.divider()
+        col_chart, col_table = st.columns([0.6, 0.4])
+        with col_chart:
+            render_patrimoine_chart(accounts)
+        with col_table:
+            st.dataframe(pd.DataFrame(perf_data), hide_index=True, use_container_width=True)
 
 # --- PAGE : MES COMPTES (Fusion & Upload) ---
 elif menu == "💳 Mes Comptes":
     st.header("💳 Gestion des Portefeuilles")
     
-    # Logic Upload
     uploaded_file = st.file_uploader("Glisser un relevé PDF", type="pdf")
+    
     if uploaded_file and f"parsed_{uploaded_file.name}" not in st.session_state:
         with st.status("🔮 Extraction Gemini 2.5 Flash-Lite...") as s:
             path = f"/tmp/{uploaded_file.name}"
@@ -76,88 +83,110 @@ elif menu == "💳 Mes Comptes":
                 st.session_state[f"temp_path_{uploaded_file.name}"] = path
                 s.update(label="Analyse terminée !", state="complete")
 
-    # Si analysé, demander confirmation
     if uploaded_file and f"parsed_{uploaded_file.name}" in st.session_state:
         res = st.session_state[f"parsed_{uploaded_file.name}"]
-        st.success(f"Détecté : {res['bank_name']} - {res['total_value']} {res['currency']}")
         
-        existing = db.query(Account).filter_by(user_id=user["username"]).all()
-        acc_opts = {f"{a.bank_name} ({a.account_type})": a.id for a in existing}
-        acc_opts["➕ Créer un nouveau compte"] = "NEW"
-        
-        choice = st.selectbox("Assigner à quel compte ?", options=acc_opts.keys())
-        
-        if st.button("Confirmer l'import"):
-            target_id = acc_opts[choice]
-            if target_id == "NEW":
-                new_acc = Account(user_id=user["username"], bank_name=res["bank_name"], account_type=res["account_type"], currency=res["currency"])
-                db.add(new_acc); db.commit(); db.refresh(new_acc)
-                target_id = new_acc.id
+        with st.container(border=True):
+            st.markdown(f"### 📋 Validation de l'analyse")
+            c1, c2, c3 = st.columns(3)
+            c1.write(f"**Banque :** {res['bank_name']}")
+            c2.write(f"**Montant :** {res['total_value']} {res['currency']}")
+            c3.write(f"**Date :** {res['date']}")
             
-            new_rec = Record(account_id=target_id, date_releve=datetime.strptime(res["date"], "%Y-%m-%d"), 
-                             total_value=res["total_value"], dividends=res["dividends"], fees=res["fees"])
-            db.add(new_rec)
-            profile.token_used += res["tokens"]
+            existing = db.query(Account).filter_by(user_id=user["username"]).all()
+            acc_opts = {f"{a.bank_name} ({a.account_type})": a.id for a in existing}
+            acc_opts["➕ Créer un nouveau compte"] = "NEW"
             
-            # Déplacement physique
-            final_dir = f"/app/storage/{user['username']}/{target_id}"
-            os.makedirs(final_dir, exist_ok=True)
-            shutil.move(st.session_state[f"temp_path_{uploaded_file.name}"], f"{final_dir}/{res['date']}.pdf")
+            choice = st.selectbox("Assigner ce relevé à :", options=acc_opts.keys())
             
-            db.commit()
-            if profile.notify_discord:
-                send_discord_msg(profile.discord_webhook, "✅ Nouveau Relevé", f"Import réussi pour {res['bank_name']}. Valeur : {res['total_value']}€")
-            
-            del st.session_state[f"parsed_{uploaded_file.name}"]
-            st.rerun()
+            if st.button("✅ Confirmer l'import et mettre à jour le Dashboard", type="primary"):
+                target_id = acc_opts[choice]
+                if target_id == "NEW":
+                    new_acc = Account(user_id=user["username"], bank_name=res["bank_name"], account_type=res["account_type"], currency=res["currency"])
+                    db.add(new_acc); db.commit(); db.refresh(new_acc)
+                    target_id = new_acc.id
+                
+                new_rec = Record(account_id=target_id, date_releve=datetime.strptime(res["date"], "%Y-%m-%d"), 
+                                 total_value=res["total_value"], dividends=res.get("dividends", 0), fees=res.get("fees", 0))
+                db.add(new_rec)
+                
+                # Update tokens
+                profile.token_used += res.get("tokens", 0)
+                
+                # Save File
+                final_dir = f"/app/storage/{user['username']}/{target_id}"
+                os.makedirs(final_dir, exist_ok=True)
+                shutil.move(st.session_state[f"temp_path_{uploaded_file.name}"], f"{final_dir}/{res['date']}.pdf")
+                
+                db.commit()
+                if profile.notify_discord:
+                    send_discord_msg(profile.discord_webhook, "✅ Nouveau Relevé", f"Import réussi pour {res['bank_name']}. Valeur : {res['total_value']}€")
+                
+                del st.session_state[f"parsed_{uploaded_file.name}"]
+                st.success("Données enregistrées ! Redirection...")
+                st.rerun()
 
-    # Liste des comptes
+    st.divider()
     accounts = db.query(Account).filter_by(user_id=user["username"]).all()
     for a in accounts:
         with st.expander(f"📂 {a.bank_name} - {a.account_type}"):
-            if st.button("Supprimer le compte", key=f"del_{a.id}"):
+            if st.button("Supprimer ce compte", key=f"del_{a.id}"):
                 db.delete(a); db.commit(); st.rerun()
-            render_account_history(a.records)
+            if a.records:
+                render_account_history(a.records)
 
-# --- PAGE : EXPORT ---
-elif menu == "📑 Export":
-    st.header("📑 Export Expert")
-    accounts = db.query(Account).filter_by(user_id=user["username"]).all()
-    sel = st.multiselect("Comptes", [a.bank_name for a in accounts])
-    d1 = st.date_input("Début", datetime(2025,1,1))
-    d2 = st.date_input("Fin", datetime.now())
-    
-    if st.button("Générer CSV"):
-        out = []
-        for a in accounts:
-            if a.bank_name in sel:
-                for r in a.records:
-                    if d1 <= r.date_releve <= d2:
-                        out.append({"Banque": a.bank_name, "Date": r.date_releve, "Valeur": r.total_value, "Dividendes": r.dividends})
-        st.download_button("Télécharger", pd.DataFrame(out).to_csv(), "aura_export.csv")
-
-# --- PAGE : PARAMÈTRES ---
+# --- PAGE : PARAMÈTRES (Mes fichiers) ---
 elif menu == "⚙️ Paramètres":
     st.header("⚙️ Préférences")
-    profile.notify_discord = st.toggle("Activer Discord", profile.notify_discord)
-    profile.discord_webhook = st.text_input("Webhook URL", profile.discord_webhook, type="password")
-    if st.button("Sauvegarder"): db.commit(); st.success("OK")
     
-    st.divider()
-    if st.button("🚨 Réinitialiser toutes mes données", type="primary"):
-        accs = db.query(Account).filter_by(user_id=user["username"]).all()
-        for a in accs: db.delete(a)
-        if os.path.exists(f"/app/storage/{user['username']}"): shutil.rmtree(f"/app/storage/{user['username']}")
-        db.commit(); st.rerun()
+    # Notifications
+    with st.container(border=True):
+        profile.notify_discord = st.toggle("Activer notifications Discord", profile.notify_discord)
+        profile.discord_webhook = st.text_input("Webhook URL", profile.discord_webhook, type="password")
+        if st.button("Enregistrer préférences"): db.commit(); st.success("OK")
+    
+    # Explorateur de fichiers personnel
+    st.subheader("📁 Mes fichiers uploadés")
+    user_path = f"/app/storage/{user['username']}"
+    if os.path.exists(user_path):
+        for acc_dir in os.listdir(user_path):
+            acc = db.query(Account).filter_by(id=acc_dir).first()
+            acc_name = acc.bank_name if acc else f"Compte #{acc_dir}"
+            st.write(f"**{acc_name}**")
+            for f in os.listdir(os.path.join(user_path, acc_dir)):
+                c1, c2 = st.columns([0.8, 0.2])
+                c1.caption(f"📄 {f}")
+                if c2.button("🗑️", key=f"del_f_{f}"):
+                    os.remove(os.path.join(user_path, acc_dir, f))
+                    st.rerun()
+    else:
+        st.info("Aucun fichier stocké.")
 
-# --- PAGE : ADMIN ---
+# --- PAGE : ADMIN (Tous les fichiers) ---
 elif menu == "🛡️ Admin":
-    st.header("🛡️ Administration")
-    for p in db.query(UserProfile).all():
-        c1, c2, c3 = st.columns([0.2, 0.6, 0.2])
-        c1.write(p.username)
-        c2.progress(min(p.token_used/p.token_limit, 1.0), text=f"{p.token_used} / {p.token_limit}")
-        new_lim = c3.number_input("Limite", value=p.token_limit, key=f"p_{p.id}")
-        if new_lim != p.token_limit: p.token_limit = new_lim; db.commit(); st.rerun()
+    st.header("🛡️ Administration Système")
+    
+    tab_users, tab_files = st.tabs(["👥 Utilisateurs", "🗄️ Tous les fichiers"])
+    
+    with tab_users:
+        for p in db.query(UserProfile).all():
+            c1, c2, c3 = st.columns([0.2, 0.6, 0.2])
+            c1.write(f"**{p.username}**")
+            c2.progress(min(p.token_used/p.token_limit, 1.0), text=f"{p.token_used:,} / {p.token_limit:,} tokens")
+            new_lim = c3.number_input("Limite", value=p.token_limit, key=f"p_{p.id}", step=1000)
+            if new_lim != p.token_limit: p.token_limit = new_lim; db.commit(); st.rerun()
+
+    with tab_files:
+        base_path = "/app/storage"
+        if os.path.exists(base_path):
+            for u_dir in os.listdir(base_path):
+                st.markdown(f"👤 **Utilisateur : {u_dir}**")
+                u_path = os.path.join(base_path, u_dir)
+                if os.path.isdir(u_path):
+                    for a_dir in os.listdir(u_path):
+                        for f in os.listdir(os.path.join(u_path, a_dir)):
+                            st.caption(f"    └─ 📁 ID Compte {a_dir} : {f}")
+        else:
+            st.info("Dossier de stockage vide.")
 
 db.close()
