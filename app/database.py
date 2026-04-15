@@ -1,7 +1,11 @@
-from sqlalchemy import Column, Integer, Float, String, Date, ForeignKey, Boolean, Text
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy import create_engine, Column, Integer, Float, String, Date, ForeignKey, Boolean, Text
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import os
 
+# Configuration de la connexion
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/aura_db")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 class UserProfile(Base):
@@ -20,11 +24,11 @@ class Account(Base):
     user_id = Column(String, index=True)
     bank_name = Column(String)
     account_type = Column(String)
-    contract_number = Column(String) # Nouveau
+    contract_number = Column(String) # Identifiant unique du contrat
     currency = Column(String, default="EUR")
     total_invested = Column(Float, default=0.0) 
-    fiscal_date = Column(Date, nullable=True) # Nouveau
-    management_profile = Column(String, nullable=True) # Nouveau
+    fiscal_date = Column(Date, nullable=True) # Utile pour le calcul des 8 ans
+    management_profile = Column(String, nullable=True) # Ex: Mandat Equilibré
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
 class Record(Base):
@@ -33,9 +37,11 @@ class Record(Base):
     account_id = Column(Integer, ForeignKey('accounts.id'))
     date_releve = Column(Date)
     total_value = Column(Float)
-    total_withdrawn = Column(Float, default=0.0) # Nouveau : Total racheté
-    fonds_euro_value = Column(Float, default=0.0) # Nouveau : Montant sur fonds euros
-    uc_value = Column(Float, default=0.0)        # Nouveau : Montant sur UC
+    total_withdrawn = Column(Float, default=0.0)
+    fonds_euro_value = Column(Float, default=0.0)
+    uc_value = Column(Float, default=0.0)
     dividends = Column(Float, default=0.0)
     fees = Column(Float, default=0.0)
     account = relationship("Account", back_populates="records")
+
+Base.metadata.create_all(bind=engine)
