@@ -60,12 +60,12 @@ manage_token_resets(profile, db)
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("🌌 Aura Pro v5.0")
+    st.title("🌌 Aura Pro v4.4")
     st.write(f"Utilisateur : **{user['username']}**")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     
     st.divider()
-    st.subheader("📅 Quota IA Hebdomadaire")
+    st.subheader("📅 Quota Hebdomadaire")
     u_pct = (profile.token_used_weekly / profile.token_limit_weekly) if profile.token_limit_weekly > 0 else 0
     st.progress(min(max(u_pct, 0.0), 1.0), text=f"{profile.token_used_weekly:,} / {profile.token_limit_weekly:,}")
 
@@ -84,7 +84,6 @@ if menu == "🌍 Dashboard":
             if last_r:
                 total_inv_eur += convert_to_eur(last_r.total_invested or 0, a.currency)
                 total_val_eur += convert_to_eur(last_r.total_value or 0, a.currency)
-                
                 euro_val = (last_r.total_value or 0) if a.is_manual else (last_r.fonds_euro_value or 0)
                 total_euro_eur += convert_to_eur(euro_val, a.currency)
                 total_uc_eur += convert_to_eur(last_r.uc_value or 0, a.currency)
@@ -93,7 +92,6 @@ if menu == "🌍 Dashboard":
                 inv_natif = last_r.total_invested or 0
                 gain_natif = last_r.total_value - inv_natif
                 pct = (gain_natif / inv_natif * 100) if inv_natif > 0 else 0
-                
                 type_display = f"{a.account_type} ✍️" if a.is_manual else a.account_type
                 val_str = f"{last_r.total_value:,.2f} {a.currency}"
                 if a.currency != "EUR": val_str += f" (~{convert_to_eur(last_r.total_value, a.currency):,.0f} €)"
@@ -119,7 +117,6 @@ if menu == "🌍 Dashboard":
         
         st.subheader("📋 Résumé des Portefeuilles")
         st.dataframe(pd.DataFrame(perf_summary), hide_index=True)
-        
         if all_positions:
             st.subheader("🔍 Détail des Actifs (ETF, Fonds, Actions)")
             st.dataframe(pd.DataFrame(all_positions), hide_index=True)
@@ -130,52 +127,36 @@ elif menu == "💳 Mes Comptes":
     
     tab_import, tab_manual, tab_manage = st.tabs(["📥 Import PDF (IA)", "✍️ Saisie Manuelle (Livrets)", "📂 Gérer mes comptes"])
     
-    # ONGLET 1 : IMPORT IA (Anti-Freeze 100% Découplé)
+    # ONGLET 1 : IMPORT IA (Mode Immédiat + Sécurité)
     with tab_import:
         st.info("Recommandé pour : Assurance Vie, PEA, Epargne Salariale (Amundi, Natixis)...")
-        up_file = st.file_uploader("Sélectionnez votre relevé PDF", type="pdf")
+        up_file = st.file_uploader("Glissez votre relevé PDF ici", type="pdf")
         
         if up_file:
             file_id = f"pdf_{up_file.file_id}"
             
-            # Initialisation des états
-            if file_id not in st.session_state:
-                st.session_state[file_id] = {"step": "waiting", "data": None}
-                
-            step = st.session_state[file_id]["step"]
-            
-            # ÉTAPE 1 : BOUTON (Libère l'UI immédiatement)
-            if step == "waiting":
-                st.success(f"📄 Fichier `{up_file.name}` prêt à être analysé.")
-                if st.button("🚀 Lancer l'analyse IA", type="primary"):
-                    st.session_state[file_id]["step"] = "processing"
-                    st.rerun()
-                    
-            # ÉTAPE 2 : TRAITEMENT (Le code lourd s'exécute ICI, le spinner est visible)
-            elif step == "processing":
-                with st.spinner("🔮 L'IA lit votre document... (Regardez les logs TrueNAS en direct)"):
+            # ÉTAPE 1 : Analyse immédiate au glisser-déposer (Comme il y a 2h)
+            if f"parsed_{file_id}" not in st.session_state and f"saved_{file_id}" not in st.session_state:
+                with st.status("🔮 L'IA analyse votre document...", expanded=True) as status:
                     t_path = f"/tmp/{up_file.name}"
-                    with open(t_path, "wb") as f:
-                        f.write(up_file.getvalue())
+                    open(t_path, "wb").write(up_file.getvalue())
                     
                     res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
                     
                     if "error" in res:
                         st.error(res["error"])
-                        if st.button("Réessayer"):
-                            st.session_state[file_id]["step"] = "waiting"
-                            st.rerun()
                     else:
-                        st.session_state[file_id]["data"] = res
-                        st.session_state[file_id]["step"] = "form"
-                        st.rerun()
+                        st.session_state[f"parsed_{file_id}"] = res
+                        st.session_state[f"t_path_{file_id}"] = t_path
+                        status.update(label="✅ Analyse terminée !", state="complete")
 
-            # ÉTAPE 3 : FORMULAIRE DE VALIDATION
-            elif step == "form":
-                res = st.session_state[file_id]["data"]
+            # ÉTAPE 2 : Formulaire de validation
+            if f"parsed_{file_id}" in st.session_state and f"saved_{file_id}" not in st.session_state:
+                res = st.session_state[f"parsed_{file_id}"]
+                
                 with st.form(key=f"form_{file_id}", border=True):
                     st.markdown("### 📋 Validation et Corrections")
-                    st.info("💡 Modifiez les valeurs ci-dessous si l'IA s'est trompée.")
+                    st.info("💡 Modifiez les valeurs si nécessaire avant d'enregistrer.")
                     
                     c1, c2, c3 = st.columns(3)
                     e_bank = c1.text_input("Banque", value=res.get("bank_name", ""))
@@ -184,11 +165,11 @@ elif menu == "💳 Mes Comptes":
                     e_curr = c3.selectbox("Devise", options=c_list, index=c_list.index(res.get("currency", "EUR")) if res.get("currency", "EUR") in c_list else 0)
                     
                     c4, c5, c6 = st.columns(3)
-                    e_val = c4.number_input("Valeur Totale", value=float(res.get("total_value", 0.0)), step=10.0)
-                    e_inv = c5.number_input("Capital Versé (Modifiable)", value=float(res.get("total_invested", 0.0)), step=10.0)
+                    e_val = c4.number_input("Valeur Totale", value=float(res.get("total_value", 0.0) or 0.0), step=10.0)
+                    e_inv = c5.number_input("Capital Versé (ou Versements Nets)", value=float(res.get("total_invested", 0.0) or 0.0), step=10.0)
                     e_type = c6.text_input("Type de compte", value=res.get("account_type", ""))
                     
-                    with st.expander("Voir le détail brut (Actifs détectés)"):
+                    with st.expander("Voir le détail brut des actifs"):
                         st.json(res.get("positions", []))
                     
                     existing = db.query(Account).filter_by(user_id=user["username"]).all()
@@ -197,43 +178,47 @@ elif menu == "💳 Mes Comptes":
                     target = st.selectbox("Assigner à :", options=opts.keys())
                     
                     if st.form_submit_button("💾 Sauvegarder dans mon patrimoine", type="primary"):
-                        acc_id = opts[target]
-                        try: p_date = datetime.strptime(e_date, "%Y-%m-%d").date()
-                        except: p_date = datetime.now().date()
+                        try:
+                            acc_id = opts[target]
+                            try: p_date = datetime.strptime(e_date, "%Y-%m-%d").date()
+                            except: p_date = datetime.now().date()
 
-                        if acc_id == "NEW":
-                            new_a = Account(user_id=user["username"], bank_name=e_bank, account_type=e_type, contract_number=res.get("contract_number"), currency=e_curr, total_invested=e_inv, is_manual=False)
-                            db.add(new_a); db.commit(); db.refresh(new_a); acc_id = new_a.id
-                        else:
-                            a_obj = db.get(Account, acc_id)
-                            a_obj.total_invested = e_inv
+                            if acc_id == "NEW":
+                                new_a = Account(user_id=user["username"], bank_name=e_bank, account_type=e_type, contract_number=res.get("contract_number"), currency=e_curr, total_invested=e_inv, is_manual=False)
+                                db.add(new_a); db.commit(); db.refresh(new_a); acc_id = new_a.id
+                            else:
+                                a_obj = db.get(Account, acc_id)
+                                a_obj.total_invested = e_inv
 
-                        new_r = Record(account_id=acc_id, date_releve=p_date, total_value=e_val, total_invested=e_inv, fonds_euro_value=res.get("fonds_euro_value", 0.0), uc_value=res.get("uc_value", 0.0), dividends=res.get("dividends", 0.0))
-                        db.add(new_r); db.commit(); db.refresh(new_r)
-                        
-                        for pos in res.get("positions", []):
-                            db.add(Position(record_id=new_r.id, name=pos.get('name','Inconnu'), asset_type=pos.get('asset_type',''), quantity=pos.get('quantity', 0.0), unit_price=pos.get('unit_price', 0.0), total_value=pos.get('total_value', 0.0)))
-                        
-                        tk = res.get("tokens", 0)
-                        profile.token_used_weekly += tk
-                        profile.token_used_daily += tk
-                        profile.token_used_global += tk
-                        
-                        store_dir = f"/app/storage/{user['username']}/{acc_id}"
-                        os.makedirs(store_dir, exist_ok=True)
-                        t_path = f"/tmp/{up_file.name}"
-                        if os.path.exists(t_path):
-                            shutil.move(t_path, f"{store_dir}/{e_date}.pdf")
-                        
-                        db.commit()
-                        if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {e_bank} OK.")
-                        
-                        st.session_state[file_id]["step"] = "saved"
-                        st.rerun()
-
-            # ÉTAPE 4 : SUCCÈS
-            elif step == "saved":
-                st.success("✅ Document importé avec succès dans la base de données. Vous pouvez fermer ce fichier (croix).")
+                            new_r = Record(account_id=acc_id, date_releve=p_date, total_value=e_val, total_invested=e_inv, fonds_euro_value=float(res.get("fonds_euro_value", 0.0) or 0.0), uc_value=float(res.get("uc_value", 0.0) or 0.0), dividends=float(res.get("dividends", 0.0) or 0.0))
+                            db.add(new_r); db.commit(); db.refresh(new_r)
+                            
+                            for pos in res.get("positions", []):
+                                new_pos = Position(record_id=new_r.id, name=str(pos.get('name', 'Inconnu'))[:255], asset_type=str(pos.get('asset_type', ''))[:255], quantity=float(pos.get('quantity', 0.0) or 0.0), unit_price=float(pos.get('unit_price', 0.0) or 0.0), total_value=float(pos.get('total_value', 0.0) or 0.0))
+                                db.add(new_pos)
+                            
+                            tk = res.get("tokens", 0)
+                            profile.token_used_weekly += tk
+                            profile.token_used_daily += tk
+                            profile.token_used_global += tk
+                            
+                            store_dir = f"/app/storage/{user['username']}/{acc_id}"
+                            os.makedirs(store_dir, exist_ok=True)
+                            t_path = st.session_state.get(f"t_path_{file_id}")
+                            if t_path and os.path.exists(t_path): shutil.move(t_path, f"{store_dir}/{e_date}.pdf")
+                            
+                            db.commit()
+                            if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {e_bank} OK.")
+                            
+                            st.session_state[f"saved_{file_id}"] = True
+                            del st.session_state[f"parsed_{file_id}"]
+                            st.rerun()
+                        except Exception as e:
+                            db.rollback()
+                            st.error(f"❌ Erreur lors de l'enregistrement en base : {e}")
+                            
+            if f"saved_{file_id}" in st.session_state:
+                st.success("✅ Fichier enregistré avec succès ! Fermez-le (croix rouge) pour en ajouter un autre.")
 
     # ONGLET 2 : SAISIE MANUELLE
     with tab_manual:
@@ -247,7 +232,7 @@ elif menu == "💳 Mes Comptes":
             m_val = cm3.number_input("Solde Actuel (€)", step=100.0, min_value=0.0)
             m_date = cm4.date_input("Date du solde", value=datetime.now())
             
-            if st.form_submit_button("💾 Ajouter / Mettre à jour ce compte", type="primary"):
+            if st.form_submit_button("💾 Ajouter / Mettre à jour", type="primary"):
                 if m_bank:
                     exist_m = db.query(Account).filter_by(user_id=user["username"], bank_name=m_bank, account_type=m_type, is_manual=True).first()
                     if not exist_m:
@@ -270,7 +255,7 @@ elif menu == "💳 Mes Comptes":
             icon = "✍️" if acc.is_manual else "📂"
             with st.expander(f"{icon} {acc.bank_name} - {acc.account_type} {f'(N°{acc.contract_number})' if acc.contract_number else ''}"):
                 c_info, c_del = st.columns([0.8, 0.2])
-                c_info.write(f"Solde / Capital : **{acc.total_invested:,.2f} {acc.currency}**")
+                c_info.write(f"Capital Actuel : **{acc.total_invested:,.2f} {acc.currency}**")
                 if c_del.button("🗑️ Supprimer", key=f"del_acc_{acc.id}"): 
                     db.delete(acc); db.commit(); st.rerun()
                 if acc.records: render_account_history(acc.records)
