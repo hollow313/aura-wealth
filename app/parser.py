@@ -3,10 +3,10 @@ from google import genai
 
 def check_quota_and_parse(pdf_path, api_key):
     try:
-        print(f"\n🚀 [AURA LOG] DÉMARRAGE ANALYSE IA : {pdf_path}")
+        print(f"\n🚀 [AURA LOG] DÉMARRAGE ANALYSE IA : {pdf_path}", flush=True)
         client = genai.Client(api_key=api_key)
         
-        print("🚀 [AURA LOG] Envoi du fichier à Google...")
+        print("🚀 [AURA LOG] Envoi du fichier à Google...", flush=True)
         file_upload = client.files.upload(file=pdf_path)
         time.sleep(5) 
         
@@ -33,7 +33,7 @@ def check_quota_and_parse(pdf_path, api_key):
         Règle : S'il y a plusieurs plans sur le même PDF (ex: PEG et PER chez Amundi), fais la somme de tout dans 'total_value' et détaille les fonds dans 'positions'. NE REPONDS QUE LE JSON PUR.
         """
         
-        print("🚀 [AURA LOG] Demande de génération à Gemini 2.5 Flash-Lite...")
+        print("🚀 [AURA LOG] Demande de génération à Gemini 2.5 Flash-Lite...", flush=True)
         response = client.models.generate_content(model='gemini-2.5-flash-lite', contents=[prompt, file_upload])
         
         usage = response.usage_metadata.total_token_count if hasattr(response, 'usage_metadata') else 0
@@ -41,7 +41,7 @@ def check_quota_and_parse(pdf_path, api_key):
         start, end = raw_text.find('{'), raw_text.rfind('}') + 1
         
         if start == -1:
-            print("❌ [AURA ERROR] Impossible de trouver du JSON dans la réponse.")
+            print("❌ [AURA ERROR] Impossible de trouver du JSON dans la réponse.", flush=True)
             return {"error": "L'IA n'a pas pu structurer la réponse."}
             
         data = json.loads(raw_text[start:end])
@@ -49,8 +49,8 @@ def check_quota_and_parse(pdf_path, api_key):
         if not data.get('currency'): data['currency'] = "EUR"
         if not data.get('positions'): data['positions'] = []
         
-        print("✅ [AURA LOG] Analyse IA terminée et réussie !")
+        print("✅ [AURA LOG] Analyse IA terminée et réussie !", flush=True)
         return data
     except Exception as e:
-        print(f"❌ [AURA ERROR] Echec de l'IA : {e}")
+        print(f"❌ [AURA ERROR] Echec de l'IA : {e}", flush=True)
         return {"error": str(e)}
