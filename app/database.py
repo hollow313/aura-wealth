@@ -12,7 +12,7 @@ class UserProfile(Base):
     id = Column(Integer, primary_key=True)
     username = Column(String, unique=True, index=True)
     show_chf = Column(Boolean, default=False)
-    active_currencies = Column(String, default="EUR") # NOUVEAU : Devises actives (ex: "EUR,CHF,USD")
+    active_currencies = Column(String, default="EUR")
     token_limit = Column(Integer, default=100000)
     token_used = Column(Integer, default=0)
     notify_discord = Column(Boolean, default=False)
@@ -44,5 +44,19 @@ class Record(Base):
     dividends = Column(Float, default=0.0)
     fees = Column(Float, default=0.0)
     account = relationship("Account", back_populates="records")
+    # NOUVEAU : Lien vers le détail des lignes
+    positions = relationship("Position", back_populates="record", cascade="all, delete-orphan")
+
+# NOUVEAU : La table qui stocke chaque ETF, Action, ou Fonds
+class Position(Base):
+    __tablename__ = 'positions'
+    id = Column(Integer, primary_key=True)
+    record_id = Column(Integer, ForeignKey('records.id'))
+    name = Column(String) # Nom de l'action ou de l'ETF
+    asset_type = Column(String, nullable=True) # Ex: ETF, Action, UC, Fonds Euro
+    quantity = Column(Float, default=0.0) # Nombre de parts
+    unit_price = Column(Float, default=0.0) # Prix unitaire
+    total_value = Column(Float, default=0.0) # Valeur totale de la ligne
+    record = relationship("Record", back_populates="positions")
 
 Base.metadata.create_all(bind=engine)
