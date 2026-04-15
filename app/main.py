@@ -60,7 +60,7 @@ manage_token_resets(profile, db)
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("🌌 Aura Pro v4.3")
+    st.title("🌌 Aura Pro v5.0")
     st.write(f"Utilisateur : **{user['username']}**")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     
@@ -130,7 +130,7 @@ elif menu == "💳 Mes Comptes":
     
     tab_import, tab_manual, tab_manage = st.tabs(["📥 Import PDF (IA)", "✍️ Saisie Manuelle (Livrets)", "📂 Gérer mes comptes"])
     
-    # ONGLET 1 : IMPORT IA (MOTEUR ANTI-FREEZE ABSOLU)
+    # ONGLET 1 : IMPORT IA (Anti-Freeze 100% Découplé)
     with tab_import:
         st.info("Recommandé pour : Assurance Vie, PEA, Epargne Salariale (Amundi, Natixis)...")
         up_file = st.file_uploader("Sélectionnez votre relevé PDF", type="pdf")
@@ -138,37 +138,41 @@ elif menu == "💳 Mes Comptes":
         if up_file:
             file_id = f"pdf_{up_file.file_id}"
             
-            # Initialisation
+            # Initialisation des états
             if file_id not in st.session_state:
-                st.session_state[file_id] = {"parsed": False, "saved": False, "data": None}
+                st.session_state[file_id] = {"step": "waiting", "data": None}
                 
-            state = st.session_state[file_id]
+            step = st.session_state[file_id]["step"]
             
-            # SI DÉJÀ SAUVEGARDÉ
-            if state["saved"]:
-                st.success("✅ Fichier importé avec succès dans votre patrimoine ! Fermez-le (croix) pour en ajouter un autre.")
-                
-            # SI NON ANALYSÉ
-            elif not state["parsed"]:
-                # LA MAGIE ANTI-FREEZE : L'IA tourne PENDANT le clic, sans rechargement préalable.
+            # ÉTAPE 1 : BOUTON (Libère l'UI immédiatement)
+            if step == "waiting":
+                st.success(f"📄 Fichier `{up_file.name}` prêt à être analysé.")
                 if st.button("🚀 Lancer l'analyse IA", type="primary"):
-                    with st.spinner("🔮 L'IA lit votre document... (Regardez la console TrueNAS)"):
-                        t_path = f"/tmp/{up_file.name}"
-                        open(t_path, "wb").write(up_file.getvalue())
-                        
-                        res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
-                        
-                        if "error" in res:
-                            st.error(res["error"])
-                        else:
-                            # Enregistrement et bascule vers le formulaire
-                            st.session_state[file_id]["parsed"] = True
-                            st.session_state[file_id]["data"] = res
+                    st.session_state[file_id]["step"] = "processing"
+                    st.rerun()
+                    
+            # ÉTAPE 2 : TRAITEMENT (Le code lourd s'exécute ICI, le spinner est visible)
+            elif step == "processing":
+                with st.spinner("🔮 L'IA lit votre document... (Regardez les logs TrueNAS en direct)"):
+                    t_path = f"/tmp/{up_file.name}"
+                    with open(t_path, "wb") as f:
+                        f.write(up_file.getvalue())
+                    
+                    res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
+                    
+                    if "error" in res:
+                        st.error(res["error"])
+                        if st.button("Réessayer"):
+                            st.session_state[file_id]["step"] = "waiting"
                             st.rerun()
-                            
-            # SI ANALYSÉ MAIS NON SAUVEGARDÉ (Le Formulaire)
-            elif state["parsed"] and not state["saved"]:
-                res = state["data"]
+                    else:
+                        st.session_state[file_id]["data"] = res
+                        st.session_state[file_id]["step"] = "form"
+                        st.rerun()
+
+            # ÉTAPE 3 : FORMULAIRE DE VALIDATION
+            elif step == "form":
+                res = st.session_state[file_id]["data"]
                 with st.form(key=f"form_{file_id}", border=True):
                     st.markdown("### 📋 Validation et Corrections")
                     st.info("💡 Modifiez les valeurs ci-dessous si l'IA s'est trompée.")
@@ -181,7 +185,7 @@ elif menu == "💳 Mes Comptes":
                     
                     c4, c5, c6 = st.columns(3)
                     e_val = c4.number_input("Valeur Totale", value=float(res.get("total_value", 0.0)), step=10.0)
-                    e_inv = c5.number_input("Capital Versé (ou Versements Nets)", value=float(res.get("total_invested", 0.0)), step=10.0)
+                    e_inv = c5.number_input("Capital Versé (Modifiable)", value=float(res.get("total_invested", 0.0)), step=10.0)
                     e_type = c6.text_input("Type de compte", value=res.get("account_type", ""))
                     
                     with st.expander("Voir le détail brut (Actifs détectés)"):
@@ -201,20 +205,20 @@ elif menu == "💳 Mes Comptes":
                             new_a = Account(user_id=user["username"], bank_name=e_bank, account_type=e_type, contract_number=res.get("contract_number"), currency=e_curr, total_invested=e_inv, is_manual=False)
                             db.add(new_a); db.commit(); db.refresh(new_a); acc_id = new_a.id
                         else:
-                            db.get(Account, acc_id).total_invested = e_inv
+                            a_obj = db.get(Account, acc_id)
+                            a_obj.total_invested = e_inv
 
                         new_r = Record(account_id=acc_id, date_releve=p_date, total_value=e_val, total_invested=e_inv, fonds_euro_value=res.get("fonds_euro_value", 0.0), uc_value=res.get("uc_value", 0.0), dividends=res.get("dividends", 0.0))
                         db.add(new_r); db.commit(); db.refresh(new_r)
                         
                         for pos in res.get("positions", []):
-                            db.add(Position(record_id=new_r.id, name=pos['name'], asset_type=pos.get('asset_type'), quantity=pos.get('quantity', 0), unit_price=pos.get('unit_price', 0), total_value=pos['total_value']))
+                            db.add(Position(record_id=new_r.id, name=pos.get('name','Inconnu'), asset_type=pos.get('asset_type',''), quantity=pos.get('quantity', 0.0), unit_price=pos.get('unit_price', 0.0), total_value=pos.get('total_value', 0.0)))
                         
                         tk = res.get("tokens", 0)
                         profile.token_used_weekly += tk
                         profile.token_used_daily += tk
                         profile.token_used_global += tk
                         
-                        # Gestion fichier
                         store_dir = f"/app/storage/{user['username']}/{acc_id}"
                         os.makedirs(store_dir, exist_ok=True)
                         t_path = f"/tmp/{up_file.name}"
@@ -224,8 +228,12 @@ elif menu == "💳 Mes Comptes":
                         db.commit()
                         if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {e_bank} OK.")
                         
-                        st.session_state[file_id]["saved"] = True
+                        st.session_state[file_id]["step"] = "saved"
                         st.rerun()
+
+            # ÉTAPE 4 : SUCCÈS
+            elif step == "saved":
+                st.success("✅ Document importé avec succès dans la base de données. Vous pouvez fermer ce fichier (croix).")
 
     # ONGLET 2 : SAISIE MANUELLE
     with tab_manual:
