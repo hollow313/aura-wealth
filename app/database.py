@@ -32,7 +32,7 @@ class Account(Base):
     total_invested = Column(Float, default=0.0) 
     fiscal_date = Column(Date, nullable=True)
     management_profile = Column(String, nullable=True)
-    is_manual = Column(Boolean, default=False) # NOUVEAU : Identifie les livrets saisis à la main
+    is_manual = Column(Boolean, default=False)
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
 class Record(Base):
