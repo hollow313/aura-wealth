@@ -1,14 +1,7 @@
-# UI & Dashboard
 streamlit>=1.38.0
 pandas==2.2.1
 plotly==5.20.0
-
-# IA Nouvelle Génération
 google-genai>=0.3.0
-
-# Base de données
 SQLAlchemy==2.0.28
 psycopg2-binary==2.9.9
-
-# Utilitaires
 requests==2.31.0
