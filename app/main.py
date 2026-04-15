@@ -1,150 +1,163 @@
 import streamlit as st
-import pandas as pd
-import os
-import shutil
+import os, shutil, pandas as pd
 from datetime import datetime
-
-# --- IMPORTS INTERNES ---
-from database import SessionLocal, Account, Record, GlobalSettings, UserProfile
+from sqlalchemy import func
+from database import SessionLocal, Account, Record, UserProfile
 from auth import get_user_info
 from parser import check_quota_and_parse
-from admin import admin_page
 from modules.charts import render_patrimoine_chart, render_account_history
-from modules.calcs import calculate_compound_interest
+from modules.notifications import send_discord_msg
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Aura Wealth", page_icon="🌌", layout="wide")
+st.set_page_config(page_title="Aura Wealth Pro", page_icon="🌌", layout="wide")
 
-# --- CACHE DE L'ANALYSE IA ---
-# Cette fonction mémorise le résultat pour éviter de payer/utiliser l'IA 50 fois pour le même PDF
-@st.cache_data(show_spinner=False)
-def cached_parse(file_content, file_name, api_key):
-    # On crée un fichier temporaire pour le parser
-    temp_path = f"/tmp/{file_name}"
-    with open(temp_path, "wb") as f:
-        f.write(file_content)
-    
-    result = check_quota_and_parse(temp_path, api_key)
-    return result, temp_path
-
-# --- AUTHENTIFICATION ---
+# --- AUTH & DB ---
 user = get_user_info()
-if not user["is_member"] and user["authenticated"]:
-    st.error("🚫 Accès restreint.")
-    st.stop()
-
 db = SessionLocal()
+profile = db.query(UserProfile).filter_by(username=user["username"]).first()
+if not profile:
+    profile = UserProfile(username=user["username"])
+    db.add(profile); db.commit(); db.refresh(profile)
 
-# --- PROFIL ET PRÉFÉRENCES ---
-if user["authenticated"]:
-    profile = db.query(UserProfile).filter_by(username=user["username"]).first()
-    if not profile:
-        profile = UserProfile(username=user["username"], show_chf=False)
-        db.add(profile)
-        db.commit()
-else:
-    profile = UserProfile(username="DevMode", show_chf=True)
-
-# --- SIDEBAR ---
+# --- NAVIGATION ---
 with st.sidebar:
-    st.title("🌌 Aura")
-    st.caption(f"Utilisateur : {user['username']}")
+    st.title("🌌 Aura Pro")
+    menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     st.divider()
-    
-    menu = st.radio("Navigation", ["🌍 Vue Globale", "💳 Mes Comptes", "🚀 Simulation", "🛡️ Admin"] if user["is_admin"] else ["🌍 Vue Globale", "💳 Mes Comptes", "🚀 Simulation"])
-    
-    st.divider()
-    new_show_chf = st.toggle("🇨🇭 Devise Suisse (CHF)", value=profile.show_chf)
-    if new_show_chf != profile.show_chf and user["authenticated"]:
-        profile.show_chf = new_show_chf
-        db.commit()
-        st.rerun()
+    st.info(f"Tokens: {profile.token_used:,} / {profile.token_limit:,}")
 
-    # --- BOUTON WIPE DATA ---
-    st.divider()
-    st.subheader("⚠️ Zone de danger")
-    if st.button("🚨 Réinitialiser mes données", type="primary"):
-        st.session_state["confirm_wipe"] = True
-
-    if st.session_state.get("confirm_wipe", False):
-        st.warning("Tout supprimer définitivement ?")
-        c1, c2 = st.columns(2)
-        if c1.button("✔️ Oui"):
-            accounts = db.query(Account).filter(Account.user_id == user["username"]).all()
-            for a in accounts: db.delete(a)
-            db.commit()
-            if os.path.exists(f"/app/storage/{user['username']}"):
-                shutil.rmtree(f"/app/storage/{user['username']}")
-            st.session_state["confirm_wipe"] = False
-            st.success("Données effacées.")
-            st.rerun()
-        if c2.button("❌ Non"):
-            st.session_state["confirm_wipe"] = False
-            st.rerun()
-
-# --- PAGE : MES COMPTES ---
-if menu == "💳 Mes Comptes":
-    st.header("Gestion des Comptes")
-    
-    # ZONE D'UPLOAD
-    uploaded_file = st.file_uploader("Ajouter un relevé PDF", type="pdf")
-    
-    if uploaded_file:
-        # On vérifie si on a déjà traité ce fichier dans cette session
-        if f"done_{uploaded_file.name}" not in st.session_state:
-            with st.status("🔮 Analyse Aura IA en cours...", expanded=True) as status:
-                # Appel de la fonction avec Cache
-                result, temp_path = cached_parse(uploaded_file.getvalue(), uploaded_file.name, os.getenv("GEMINI_API_KEY"))
-                
-                if "error" in result:
-                    st.error(result["error"])
-                else:
-                    # Enregistrement en BDD
-                    acc = db.query(Account).filter_by(user_id=user["username"], bank_name=result["bank_name"], account_type=result["account_type"]).first()
-                    if not acc:
-                        acc = Account(user_id=user["username"], bank_name=result["bank_name"], account_type=result["account_type"], currency=result["currency"])
-                        db.add(acc); db.commit(); db.refresh(acc)
-
-                    new_rec = Record(account_id=acc.id, date_releve=datetime.strptime(result["date"], "%Y-%m-%d"), total_value=result["total_value"])
-                    db.add(new_rec)
-                    
-                    # Déplacement du fichier
-                    save_dir = f"/app/storage/{user['username']}/{acc.id}"
-                    os.makedirs(save_dir, exist_ok=True)
-                    shutil.move(temp_path, f"{save_dir}/{result['date']}.pdf")
-                    
-                    db.commit()
-                    st.session_state[f"done_{uploaded_file.name}"] = True
-                    status.update(label="✅ Analyse terminée !", state="complete")
-                    st.success("Données enregistrées.")
-                    st.rerun()
-
-    st.divider()
-
-    # LISTE DES COMPTES AVEC BOUTON SUPPRIMER
+# --- PAGE : DASHBOARD ---
+if menu == "🌍 Dashboard":
+    st.header("📈 Vue Globale du Patrimoine")
     accounts = db.query(Account).filter_by(user_id=user["username"]).all()
-    for acc in accounts:
-        with st.expander(f"📂 {acc.bank_name} - {acc.account_type}", expanded=True):
-            col_info, col_del = st.columns([0.85, 0.15])
-            col_info.write(f"Devise : **{acc.currency}**")
-            if col_del.button("🗑️", key=f"del_{acc.id}", help="Supprimer ce compte"):
-                db.delete(acc)
-                db.commit()
-                st.rerun()
-            render_account_history(acc.id)
+    
+    if not accounts:
+        st.info("Commencez par uploader un relevé dans 'Mes Comptes'.")
+    else:
+        # Calculs KPIs
+        total_eur = 0
+        total_div = 0
+        perf_data = []
+        
+        for a in accounts:
+            if a.records:
+                sorted_recs = sorted(a.records, key=lambda r: r.date_releve)
+                val_now = sorted_recs[-1].total_value
+                val_start = sorted_recs[0].total_value
+                total_eur += val_now
+                total_div += sum(r.dividends for r in a.records)
+                
+                # Calcul Rendement
+                yield_total = ((val_now - val_start) / val_start * 100) if val_start > 0 else 0
+                perf_data.append({"Compte": a.bank_name, "Actuel": val_now, "Rendement": f"{yield_total:+.2f}%"})
 
-# --- PAGE : VUE GLOBALE ---
-elif menu == "🌍 Vue Globale":
-    st.header("Patrimoine Global")
-    # ... (Garde ton code précédent pour le calcul des totaux ici)
-    render_patrimoine_chart(user["username"])
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Patrimoine Total", f"{total_eur:,.2f} €")
+        m2.metric("Dividendes Perçus", f"{total_div:,.2f} €")
+        m3.metric("Nombre de Comptes", len(accounts))
+        
+        render_patrimoine_chart(accounts)
+        st.table(pd.DataFrame(perf_data))
 
-# --- PAGE : SIMULATION ---
-elif menu == "🚀 Simulation":
-    st.header("Simulateur")
-    # ... (Garde ton code précédent de simulation ici)
+# --- PAGE : MES COMPTES (Fusion & Upload) ---
+elif menu == "💳 Mes Comptes":
+    st.header("💳 Gestion des Portefeuilles")
+    
+    # Logic Upload
+    uploaded_file = st.file_uploader("Glisser un relevé PDF", type="pdf")
+    if uploaded_file and f"parsed_{uploaded_file.name}" not in st.session_state:
+        with st.status("🔮 Extraction Gemini 2.5 Flash-Lite...") as s:
+            path = f"/tmp/{uploaded_file.name}"
+            with open(path, "wb") as f: f.write(uploaded_file.getvalue())
+            
+            res = check_quota_and_parse(path, os.getenv("GEMINI_API_KEY"))
+            if "error" in res: st.error(res["error"])
+            else:
+                st.session_state[f"parsed_{uploaded_file.name}"] = res
+                st.session_state[f"temp_path_{uploaded_file.name}"] = path
+                s.update(label="Analyse terminée !", state="complete")
 
+    # Si analysé, demander confirmation
+    if uploaded_file and f"parsed_{uploaded_file.name}" in st.session_state:
+        res = st.session_state[f"parsed_{uploaded_file.name}"]
+        st.success(f"Détecté : {res['bank_name']} - {res['total_value']} {res['currency']}")
+        
+        existing = db.query(Account).filter_by(user_id=user["username"]).all()
+        acc_opts = {f"{a.bank_name} ({a.account_type})": a.id for a in existing}
+        acc_opts["➕ Créer un nouveau compte"] = "NEW"
+        
+        choice = st.selectbox("Assigner à quel compte ?", options=acc_opts.keys())
+        
+        if st.button("Confirmer l'import"):
+            target_id = acc_opts[choice]
+            if target_id == "NEW":
+                new_acc = Account(user_id=user["username"], bank_name=res["bank_name"], account_type=res["account_type"], currency=res["currency"])
+                db.add(new_acc); db.commit(); db.refresh(new_acc)
+                target_id = new_acc.id
+            
+            new_rec = Record(account_id=target_id, date_releve=datetime.strptime(res["date"], "%Y-%m-%d"), 
+                             total_value=res["total_value"], dividends=res["dividends"], fees=res["fees"])
+            db.add(new_rec)
+            profile.token_used += res["tokens"]
+            
+            # Déplacement physique
+            final_dir = f"/app/storage/{user['username']}/{target_id}"
+            os.makedirs(final_dir, exist_ok=True)
+            shutil.move(st.session_state[f"temp_path_{uploaded_file.name}"], f"{final_dir}/{res['date']}.pdf")
+            
+            db.commit()
+            if profile.notify_discord:
+                send_discord_msg(profile.discord_webhook, "✅ Nouveau Relevé", f"Import réussi pour {res['bank_name']}. Valeur : {res['total_value']}€")
+            
+            del st.session_state[f"parsed_{uploaded_file.name}"]
+            st.rerun()
+
+    # Liste des comptes
+    accounts = db.query(Account).filter_by(user_id=user["username"]).all()
+    for a in accounts:
+        with st.expander(f"📂 {a.bank_name} - {a.account_type}"):
+            if st.button("Supprimer le compte", key=f"del_{a.id}"):
+                db.delete(a); db.commit(); st.rerun()
+            render_account_history(a.records)
+
+# --- PAGE : EXPORT ---
+elif menu == "📑 Export":
+    st.header("📑 Export Expert")
+    accounts = db.query(Account).filter_by(user_id=user["username"]).all()
+    sel = st.multiselect("Comptes", [a.bank_name for a in accounts])
+    d1 = st.date_input("Début", datetime(2025,1,1))
+    d2 = st.date_input("Fin", datetime.now())
+    
+    if st.button("Générer CSV"):
+        out = []
+        for a in accounts:
+            if a.bank_name in sel:
+                for r in a.records:
+                    if d1 <= r.date_releve <= d2:
+                        out.append({"Banque": a.bank_name, "Date": r.date_releve, "Valeur": r.total_value, "Dividendes": r.dividends})
+        st.download_button("Télécharger", pd.DataFrame(out).to_csv(), "aura_export.csv")
+
+# --- PAGE : PARAMÈTRES ---
+elif menu == "⚙️ Paramètres":
+    st.header("⚙️ Préférences")
+    profile.notify_discord = st.toggle("Activer Discord", profile.notify_discord)
+    profile.discord_webhook = st.text_input("Webhook URL", profile.discord_webhook, type="password")
+    if st.button("Sauvegarder"): db.commit(); st.success("OK")
+    
+    st.divider()
+    if st.button("🚨 Réinitialiser toutes mes données", type="primary"):
+        accs = db.query(Account).filter_by(user_id=user["username"]).all()
+        for a in accs: db.delete(a)
+        if os.path.exists(f"/app/storage/{user['username']}"): shutil.rmtree(f"/app/storage/{user['username']}")
+        db.commit(); st.rerun()
+
+# --- PAGE : ADMIN ---
 elif menu == "🛡️ Admin":
-    admin_page(user["username"])
+    st.header("🛡️ Administration")
+    for p in db.query(UserProfile).all():
+        c1, c2, c3 = st.columns([0.2, 0.6, 0.2])
+        c1.write(p.username)
+        c2.progress(min(p.token_used/p.token_limit, 1.0), text=f"{p.token_used} / {p.token_limit}")
+        new_lim = c3.number_input("Limite", value=p.token_limit, key=f"p_{p.id}")
+        if new_lim != p.token_limit: p.token_limit = new_lim; db.commit(); st.rerun()
 
 db.close()
