@@ -11,8 +11,10 @@ from modules.charts import render_patrimoine_chart, render_account_history, rend
 from modules.notifications import send_discord_msg
 from fix_db import migrate
 
+# --- CONFIGURATION (Doit être ligne 1) ---
 st.set_page_config(page_title="Aura Wealth Pro", page_icon="🌌", layout="wide", initial_sidebar_state="expanded")
 
+# --- API TAUX DE CHANGE ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_exchange_rates():
     try: return requests.get("https://open.er-api.com/v6/latest/EUR", timeout=3).json().get("rates", {"EUR": 1.0, "CHF": 0.98, "USD": 1.08})
@@ -24,10 +26,12 @@ def convert_to_eur(amount, currency):
     rate = rates.get(currency.upper(), 1.0)
     return amount / rate if rate > 0 else amount
 
+# --- INIT DB & MIGRATION ---
 db = SessionLocal()
 try: migrate() 
 except: pass
 
+# --- AUTHENTIFICATION ---
 try:
     user = get_user_info()
     if not user or not user.get("username"): st.warning("Veuillez vous connecter."); st.stop()
@@ -38,6 +42,7 @@ if not profile:
     profile = UserProfile(username=user["username"])
     db.add(profile); db.commit(); db.refresh(profile)
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("🌌 Aura Pro")
     st.write(f"Utilisateur : **{user['username']}**")
@@ -59,7 +64,7 @@ if menu == "🌍 Dashboard":
         total_euro_eur = 0
         total_uc_eur = 0
         perf_summary = []
-        all_positions = [] # Pour stocker toutes les actions/ETF
+        all_positions = []
 
         for a in accounts:
             last_r = db.query(Record).filter_by(account_id=a.id).order_by(Record.date_releve.desc()).first()
@@ -85,7 +90,6 @@ if menu == "🌍 Dashboard":
                     "Perf.": f"{pct:+.2f}%"
                 })
 
-                # Récupération des positions du relevé actuel
                 for pos in last_r.positions:
                     all_positions.append({
                         "Compte": a.bank_name,
@@ -122,87 +126,102 @@ elif menu == "💳 Mes Comptes":
     st.header("💳 Gestion & Importation")
     up_file = st.file_uploader("Importer un relevé PDF", type="pdf")
     
-    if up_file and f"p_{up_file.name}" not in st.session_state:
-        with st.status("🔮 Extraction ultra-précise (Lignes incluses)...", expanded=True) as s:
-            t_path = f"/tmp/{up_file.name}"; open(t_path, "wb").write(up_file.getvalue())
-            res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
-            if "error" in res: st.error(res["error"])
-            else:
-                st.session_state[f"p_{up_file.name}"] = res
-                st.session_state[f"t_{up_file.name}"] = t_path
-                s.update(label="Analyse terminée !", state="complete")
+    if up_file:
+        file_key = f"imported_{up_file.name}"
+        
+        # SI LE FICHIER N'A PAS ENCORE ÉTÉ VALIDÉ
+        if not st.session_state.get(file_key):
+            
+            # ÉTAPE 1 : EXTRACTION IA
+            if f"p_{up_file.name}" not in st.session_state:
+                with st.status("🔮 Extraction ultra-précise (Lignes incluses)...", expanded=True) as s:
+                    t_path = f"/tmp/{up_file.name}"; open(t_path, "wb").write(up_file.getvalue())
+                    res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
+                    if "error" in res: 
+                        st.error(res["error"])
+                    else:
+                        st.session_state[f"p_{up_file.name}"] = res
+                        st.session_state[f"t_{up_file.name}"] = t_path
+                        s.update(label="Analyse terminée !", state="complete")
 
-    if up_file and f"p_{up_file.name}" in st.session_state:
-        res = st.session_state[f"p_{up_file.name}"]
-        with st.container(border=True):
-            st.markdown(f"### 📋 Validation ({len(res.get('positions', []))} actifs détectés)")
-            
-            c_1, c_2, c_3 = st.columns(3)
-            edit_bank = c_1.text_input("Banque", value=res.get("bank_name", ""))
-            edit_date = c_2.text_input("Date (YYYY-MM-DD)", value=res.get("date", ""))
-            curr_list = ["EUR", "CHF", "USD", "GBP", "CAD"]
-            edit_curr = c_3.selectbox("Devise", options=curr_list, index=curr_list.index(res.get("currency", "EUR")) if res.get("currency", "EUR") in curr_list else 0)
-            
-            c_4, c_5, c_6 = st.columns(3)
-            edit_val = c_4.number_input("Valeur Totale", value=float(res.get("total_value", 0.0)), step=100.0)
-            edit_inv = c_5.number_input("Capital Versé", value=float(res.get("total_invested", 0.0)), step=100.0)
-            edit_contract = c_6.text_input("N° Contrat", value=res.get("contract_number", ""))
-            
-            with st.expander("Voir les actifs extraits"):
-                st.json(res.get("positions", []))
-            
-            existing_accs = db.query(Account).filter_by(user_id=user["username"]).all()
-            opts = {f"{a.bank_name} (N°{a.contract_number}) - {a.currency}": a.id for a in existing_accs}
-            opts["➕ Créer un nouveau compte"] = "NEW"
-            target_acc = st.selectbox("Assigner ce relevé à :", options=opts.keys())
-            
-            if st.button("🚀 Valider l'importation", type="primary"):
-                acc_id = opts[target_acc]
-                try: parsed_date = datetime.strptime(edit_date, "%Y-%m-%d").date()
-                except: parsed_date = datetime.now().date()
+            # ÉTAPE 2 : VALIDATION MANUELLE
+            if f"p_{up_file.name}" in st.session_state:
+                res = st.session_state[f"p_{up_file.name}"]
+                with st.container(border=True):
+                    st.markdown(f"### 📋 Validation ({len(res.get('positions', []))} actifs détectés)")
+                    
+                    c_1, c_2, c_3 = st.columns(3)
+                    edit_bank = c_1.text_input("Banque", value=res.get("bank_name", ""))
+                    edit_date = c_2.text_input("Date (YYYY-MM-DD)", value=res.get("date", ""))
+                    curr_list = ["EUR", "CHF", "USD", "GBP", "CAD"]
+                    edit_curr = c_3.selectbox("Devise", options=curr_list, index=curr_list.index(res.get("currency", "EUR")) if res.get("currency", "EUR") in curr_list else 0)
+                    
+                    c_4, c_5, c_6 = st.columns(3)
+                    edit_val = c_4.number_input("Valeur Totale", value=float(res.get("total_value", 0.0)), step=100.0)
+                    edit_inv = c_5.number_input("Capital Versé (Modifiable)", value=float(res.get("total_invested", 0.0)), step=100.0)
+                    edit_contract = c_6.text_input("N° Contrat", value=res.get("contract_number", ""))
+                    
+                    with st.expander("Voir les actifs extraits"):
+                        st.json(res.get("positions", []))
+                    
+                    existing_accs = db.query(Account).filter_by(user_id=user["username"]).all()
+                    opts = {f"{a.bank_name} (N°{a.contract_number}) - {a.currency}": a.id for a in existing_accs}
+                    opts["➕ Créer un nouveau compte"] = "NEW"
+                    target_acc = st.selectbox("Assigner ce relevé à :", options=opts.keys())
+                    
+                    if st.button("🚀 Valider l'importation", type="primary"):
+                        acc_id = opts[target_acc]
+                        try: parsed_date = datetime.strptime(edit_date, "%Y-%m-%d").date()
+                        except: parsed_date = datetime.now().date()
 
-                if acc_id == "NEW":
-                    new_a = Account(
-                        user_id=user["username"], bank_name=edit_bank, account_type=res.get("account_type", ""), 
-                        contract_number=edit_contract, currency=edit_curr, total_invested=edit_inv,
-                        management_profile=res.get("management_profile")
-                    )
-                    db.add(new_a); db.commit(); db.refresh(new_a); acc_id = new_a.id
-                else:
-                    db.get(Account, acc_id).total_invested = edit_inv
+                        if acc_id == "NEW":
+                            new_a = Account(
+                                user_id=user["username"], bank_name=edit_bank, account_type=res.get("account_type", ""), 
+                                contract_number=edit_contract, currency=edit_curr, total_invested=edit_inv,
+                                management_profile=res.get("management_profile")
+                            )
+                            db.add(new_a); db.commit(); db.refresh(new_a); acc_id = new_a.id
+                        else:
+                            db.get(Account, acc_id).total_invested = edit_inv
 
-                # Sauvegarde du Record global
-                new_rec = Record(
-                    account_id=acc_id, date_releve=parsed_date, total_value=edit_val, total_invested=edit_inv,
-                    fonds_euro_value=float(res.get("fonds_euro_value", 0.0)), uc_value=float(res.get("uc_value", 0.0)),
-                    dividends=float(res.get("dividends", 0.0)), fees=float(res.get("fees", 0.0))
-                )
-                db.add(new_rec)
-                db.commit() # Commit pour avoir l'ID du record
-                db.refresh(new_rec)
-                
-                # Sauvegarde granulaire (Les Positions !)
-                for pos in res.get("positions", []):
-                    new_pos = Position(
-                        record_id=new_rec.id,
-                        name=pos.get("name", "Inconnu"),
-                        asset_type=pos.get("asset_type", ""),
-                        quantity=float(pos.get("quantity", 0.0)),
-                        unit_price=float(pos.get("unit_price", 0.0)),
-                        total_value=float(pos.get("total_value", 0.0))
-                    )
-                    db.add(new_pos)
+                        # Sauvegarde du Record
+                        new_rec = Record(
+                            account_id=acc_id, date_releve=parsed_date, total_value=edit_val, total_invested=edit_inv,
+                            fonds_euro_value=float(res.get("fonds_euro_value", 0.0)), uc_value=float(res.get("uc_value", 0.0)),
+                            dividends=float(res.get("dividends", 0.0)), fees=float(res.get("fees", 0.0))
+                        )
+                        db.add(new_rec)
+                        db.commit(); db.refresh(new_rec)
+                        
+                        # Sauvegarde des Positions
+                        for pos in res.get("positions", []):
+                            new_pos = Position(
+                                record_id=new_rec.id,
+                                name=pos.get("name", "Inconnu"),
+                                asset_type=pos.get("asset_type", ""),
+                                quantity=float(pos.get("quantity", 0.0)),
+                                unit_price=float(pos.get("unit_price", 0.0)),
+                                total_value=float(pos.get("total_value", 0.0))
+                            )
+                            db.add(new_pos)
 
-                profile.token_used += res.get("tokens", 0)
-                store_dir = f"/app/storage/{user['username']}/{acc_id}"
-                os.makedirs(store_dir, exist_ok=True)
-                if os.path.exists(st.session_state[f"t_{up_file.name}"]):
-                    shutil.move(st.session_state[f"t_{up_file.name}"], f"{store_dir}/{edit_date}.pdf")
-                
-                db.commit()
-                if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {edit_bank} OK.")
-                del st.session_state[f"p_{up_file.name}"]
-                st.success("Actifs enregistrés avec succès !"); st.rerun()
+                        profile.token_used += res.get("tokens", 0)
+                        store_dir = f"/app/storage/{user['username']}/{acc_id}"
+                        os.makedirs(store_dir, exist_ok=True)
+                        if os.path.exists(st.session_state[f"t_{up_file.name}"]):
+                            shutil.move(st.session_state[f"t_{up_file.name}"], f"{store_dir}/{edit_date}.pdf")
+                        
+                        db.commit()
+                        if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {edit_bank} OK.")
+                        
+                        # VERROUILLAGE ANTI-FREEZE
+                        st.session_state[file_key] = True
+                        del st.session_state[f"p_{up_file.name}"]
+                        st.success("Actifs enregistrés avec succès !")
+                        st.rerun()
+        else:
+            # SI LE FICHIER A DÉJÀ ÉTÉ TRAITÉ
+            st.success(f"✅ Le document '{up_file.name}' a été importé avec succès. Vous pouvez le fermer (croix rouge) pour en ajouter un autre.")
 
     st.divider()
     for acc in db.query(Account).filter_by(user_id=user["username"]).all():
@@ -212,7 +231,7 @@ elif menu == "💳 Mes Comptes":
             if c_del.button("🗑️ Supprimer", key=f"del_acc_{acc.id}"): db.delete(acc); db.commit(); st.rerun()
             if acc.records: render_account_history(acc.records)
 
-# --- PAGE : EXPORT & PARAMÈTRES & ADMIN (Identique) ---
+# --- PAGE : EXPORT ---
 elif menu == "📑 Export":
     st.header("📑 Exportation")
     accs = db.query(Account).filter_by(user_id=user["username"]).all()
@@ -221,6 +240,7 @@ elif menu == "📑 Export":
             data = [{"Banque": a.bank_name, "Date": r.date_releve, "Valeur": r.total_value} for a in accs for r in a.records]
             st.download_button("Télécharger", pd.DataFrame(data).to_csv(index=False), "export.csv")
 
+# --- PAGE : PARAMÈTRES ---
 elif menu == "⚙️ Paramètres":
     st.header("⚙️ Configuration")
     with st.container(border=True):
@@ -235,6 +255,7 @@ elif menu == "⚙️ Paramètres":
         for a in db.query(Account).filter_by(user_id=user["username"]).all(): db.delete(a)
         db.commit(); st.rerun()
 
+# --- PAGE : ADMIN ---
 elif menu == "🛡️ Admin":
     st.header("🛡️ Administration")
     for p in db.query(UserProfile).all():
