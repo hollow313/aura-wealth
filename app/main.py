@@ -5,11 +5,18 @@ from sqlalchemy import func
 
 # --- IMPORTS INTERNES ---
 from database import SessionLocal, Account, Record, UserProfile
+from fix_db import migrate
 from auth import get_user_info
 from parser import check_quota_and_parse
 from modules.charts import render_patrimoine_chart, render_account_history, render_allocation_chart
 from modules.notifications import send_discord_msg
 
+
+# FORCE LA MIGRATION AU LANCEMENT
+try:
+    migrate()
+except:
+    pass
 # --- CONFIGURATION STREAMLIT ---
 st.set_page_config(
     page_title="Aura Wealth Pro", 
