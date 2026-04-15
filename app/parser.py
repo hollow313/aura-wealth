@@ -1,7 +1,6 @@
 import json, time, logging
 from google import genai
 
-# Configuration pour forcer l'affichage dans la console Docker/TrueNAS
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ def check_quota_and_parse(pdf_path, api_key):
             "contract_number": "string",
             "date": "YYYY-MM-DD",
             "total_value": float (Valeur totale de l'épargne atteinte),
-            "total_invested": float (Total versé depuis l'origine, versements nets. S'il y a de l'intéressement/participation, inclus-le ici. 0.0 si absent),
+            "total_invested": float (Total versé depuis l'origine, versements nets. Cherche bien, notamment 'Cumul des primes versées'. 0.0 si absent),
             "fonds_euro_value": float,
             "uc_value": float,
             "fiscal_date": "YYYY-MM-DD",
@@ -33,10 +32,12 @@ def check_quota_and_parse(pdf_path, api_key):
             "dividends": float (Intéressement et Participation perçus vont ici !),
             "fees": float,
             "positions": [
-                {"name": "string (Nom du fonds ou de l'action)", "asset_type": "string", "quantity": float, "unit_price": float, "total_value": float}
+                {"name": "string", "asset_type": "string", "quantity": float, "unit_price": float, "total_value": float}
             ]
         }
-        Règle : S'il y a plusieurs plans sur le même PDF (ex: PEG et PER), fais la somme dans 'total_value' et détaille les fonds dans 'positions'. NE REPONDS QUE LE JSON PUR.
+        Règle 1 : S'il y a plusieurs plans sur le même PDF (ex: PEG et PER), fais la somme dans 'total_value' et détaille les fonds dans 'positions'.
+        Règle 2 : TOUTES les valeurs numériques doivent être des Float (ex: 0.0). Jamais de string ou de null pour les chiffres.
+        NE REPONDS QUE LE JSON PUR.
         """
         
         logger.info("🚀 [AURA] Appel à Gemini 2.5 Flash-Lite...")
