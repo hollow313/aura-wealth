@@ -15,7 +15,7 @@ def check_quota_and_parse(pdf_path, api_key):
             "contract_number": "string",
             "date": "YYYY-MM-DD",
             "total_value": float,
-            "total_invested": float (Total versé depuis l'origine, 0.0 si absent),
+            "total_invested": float (Chercher 'Total versé depuis l'origine' OU additionner les 'Cumul des primes versées' dans la section fiscale, 0.0 si vraiment introuvable),
             "fonds_euro_value": float,
             "uc_value": float,
             "fiscal_date": "YYYY-MM-DD",
