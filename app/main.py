@@ -11,10 +11,10 @@ from modules.charts import render_patrimoine_chart, render_account_history, rend
 from modules.notifications import send_discord_msg
 from fix_db import migrate
 
-# --- CONFIGURATION (Doit être ligne 1) ---
+# --- 1. CONFIGURATION (Doit être la toute première commande) ---
 st.set_page_config(page_title="Aura Wealth Pro", page_icon="🌌", layout="wide", initial_sidebar_state="expanded")
 
-# --- API TAUX DE CHANGE ---
+# --- 2. API TAUX DE CHANGE ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_exchange_rates():
     try: return requests.get("https://open.er-api.com/v6/latest/EUR", timeout=3).json().get("rates", {"EUR": 1.0, "CHF": 0.98, "USD": 1.08})
@@ -26,12 +26,12 @@ def convert_to_eur(amount, currency):
     rate = rates.get(currency.upper(), 1.0)
     return amount / rate if rate > 0 else amount
 
-# --- INIT DB & MIGRATION ---
+# --- 3. INIT DB & MIGRATION ---
 db = SessionLocal()
 try: migrate() 
 except: pass
 
-# --- AUTHENTIFICATION ---
+# --- 4. AUTHENTIFICATION ---
 try:
     user = get_user_info()
     if not user or not user.get("username"): st.warning("Veuillez vous connecter."); st.stop()
@@ -42,9 +42,9 @@ if not profile:
     profile = UserProfile(username=user["username"])
     db.add(profile); db.commit(); db.refresh(profile)
 
-# --- SIDEBAR ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("🌌 Aura Pro")
+    st.title("🌌 Aura Pro v3.2")
     st.write(f"Utilisateur : **{user['username']}**")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     st.divider()
@@ -115,11 +115,11 @@ if menu == "🌍 Dashboard":
             
             st.divider()
             st.subheader("📋 Résumé des Portefeuilles")
-            st.dataframe(pd.DataFrame(perf_summary), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(perf_summary), hide_index=True, use_container_width=True)
 
             if all_positions:
                 st.subheader("🔍 Détail des Actifs (ETF, Actions, Fonds)")
-                st.dataframe(pd.DataFrame(all_positions), hide_index=True, width='stretch')
+                st.dataframe(pd.DataFrame(all_positions), hide_index=True, use_container_width=True)
 
 # --- PAGE : MES COMPTES ---
 elif menu == "💳 Mes Comptes":
@@ -127,41 +127,47 @@ elif menu == "💳 Mes Comptes":
     up_file = st.file_uploader("Importer un relevé PDF", type="pdf")
     
     if up_file:
-        file_key = f"imported_{up_file.name}"
+        file_id = up_file.file_id # ID unique généré par Streamlit pour éviter les bugs
         
-        # SI LE FICHIER N'A PAS ENCORE ÉTÉ VALIDÉ
-        if not st.session_state.get(file_key):
+        # SI LE FICHIER N'A PAS ENCORE ÉTÉ TRAITÉ
+        if f"done_{file_id}" not in st.session_state:
             
             # ÉTAPE 1 : EXTRACTION IA
-            if f"p_{up_file.name}" not in st.session_state:
-                with st.status("🔮 Extraction ultra-précise (Lignes incluses)...", expanded=True) as s:
-                    t_path = f"/tmp/{up_file.name}"; open(t_path, "wb").write(up_file.getvalue())
+            if f"parsed_{file_id}" not in st.session_state:
+                with st.spinner("🔮 Extraction de toutes les lignes d'actifs par Gemini..."):
+                    t_path = f"/tmp/{up_file.name}"
+                    with open(t_path, "wb") as f: f.write(up_file.getvalue())
                     res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
+                    
                     if "error" in res: 
                         st.error(res["error"])
                     else:
-                        st.session_state[f"p_{up_file.name}"] = res
-                        st.session_state[f"t_{up_file.name}"] = t_path
-                        s.update(label="Analyse terminée !", state="complete")
+                        st.session_state[f"parsed_{file_id}"] = res
+                        st.session_state[f"t_path_{file_id}"] = t_path
+                        st.rerun()
 
-            # ÉTAPE 2 : VALIDATION MANUELLE
-            if f"p_{up_file.name}" in st.session_state:
-                res = st.session_state[f"p_{up_file.name}"]
-                with st.container(border=True):
+            # ÉTAPE 2 : FORMULAIRE DE VALIDATION (ANTI-FREEZE)
+            elif f"parsed_{file_id}" in st.session_state:
+                res = st.session_state[f"parsed_{file_id}"]
+                
+                # Le st.form bloque le rechargement de page intempestif
+                with st.form(key=f"form_{file_id}", border=True):
                     st.markdown(f"### 📋 Validation ({len(res.get('positions', []))} actifs détectés)")
+                    st.info("💡 Modifiez les valeurs ci-dessous si nécessaire (ex: Capital Versé non détecté).")
                     
                     c_1, c_2, c_3 = st.columns(3)
                     edit_bank = c_1.text_input("Banque", value=res.get("bank_name", ""))
                     edit_date = c_2.text_input("Date (YYYY-MM-DD)", value=res.get("date", ""))
                     curr_list = ["EUR", "CHF", "USD", "GBP", "CAD"]
-                    edit_curr = c_3.selectbox("Devise", options=curr_list, index=curr_list.index(res.get("currency", "EUR")) if res.get("currency", "EUR") in curr_list else 0)
+                    default_curr_idx = curr_list.index(res.get("currency", "EUR")) if res.get("currency", "EUR") in curr_list else 0
+                    edit_curr = c_3.selectbox("Devise", options=curr_list, index=default_curr_idx)
                     
                     c_4, c_5, c_6 = st.columns(3)
                     edit_val = c_4.number_input("Valeur Totale", value=float(res.get("total_value", 0.0)), step=100.0)
-                    edit_inv = c_5.number_input("Capital Versé (Modifiable)", value=float(res.get("total_invested", 0.0)), step=100.0)
+                    edit_inv = c_5.number_input("Capital Versé", value=float(res.get("total_invested", 0.0)), step=100.0)
                     edit_contract = c_6.text_input("N° Contrat", value=res.get("contract_number", ""))
                     
-                    with st.expander("Voir les actifs extraits"):
+                    with st.expander("Voir le détail brut des actifs extraits"):
                         st.json(res.get("positions", []))
                     
                     existing_accs = db.query(Account).filter_by(user_id=user["username"]).all()
@@ -169,7 +175,10 @@ elif menu == "💳 Mes Comptes":
                     opts["➕ Créer un nouveau compte"] = "NEW"
                     target_acc = st.selectbox("Assigner ce relevé à :", options=opts.keys())
                     
-                    if st.button("🚀 Valider l'importation", type="primary"):
+                    # Le bouton de soumission du formulaire
+                    submitted = st.form_submit_button("🚀 Valider l'importation", type="primary")
+                    
+                    if submitted:
                         acc_id = opts[target_acc]
                         try: parsed_date = datetime.strptime(edit_date, "%Y-%m-%d").date()
                         except: parsed_date = datetime.now().date()
@@ -193,7 +202,7 @@ elif menu == "💳 Mes Comptes":
                         db.add(new_rec)
                         db.commit(); db.refresh(new_rec)
                         
-                        # Sauvegarde des Positions
+                        # Sauvegarde des Positions granulaires
                         for pos in res.get("positions", []):
                             new_pos = Position(
                                 record_id=new_rec.id,
@@ -206,22 +215,23 @@ elif menu == "💳 Mes Comptes":
                             db.add(new_pos)
 
                         profile.token_used += res.get("tokens", 0)
+                        
+                        # Gestion du fichier physique
                         store_dir = f"/app/storage/{user['username']}/{acc_id}"
                         os.makedirs(store_dir, exist_ok=True)
-                        if os.path.exists(st.session_state[f"t_{up_file.name}"]):
-                            shutil.move(st.session_state[f"t_{up_file.name}"], f"{store_dir}/{edit_date}.pdf")
+                        t_path = st.session_state.get(f"t_path_{file_id}")
+                        if t_path and os.path.exists(t_path):
+                            shutil.move(t_path, f"{store_dir}/{edit_date}.pdf")
                         
                         db.commit()
                         if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {edit_bank} OK.")
                         
-                        # VERROUILLAGE ANTI-FREEZE
-                        st.session_state[file_key] = True
-                        del st.session_state[f"p_{up_file.name}"]
-                        st.success("Actifs enregistrés avec succès !")
+                        # Nettoyage et verrouillage
+                        st.session_state[f"done_{file_id}"] = True
+                        del st.session_state[f"parsed_{file_id}"]
                         st.rerun()
         else:
-            # SI LE FICHIER A DÉJÀ ÉTÉ TRAITÉ
-            st.success(f"✅ Le document '{up_file.name}' a été importé avec succès. Vous pouvez le fermer (croix rouge) pour en ajouter un autre.")
+            st.success("✅ Fichier importé avec succès ! Fermez-le (croix sur le fichier) pour en importer un nouveau.")
 
     st.divider()
     for acc in db.query(Account).filter_by(user_id=user["username"]).all():
