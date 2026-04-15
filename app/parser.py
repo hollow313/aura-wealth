@@ -16,16 +16,24 @@ def check_quota_and_parse(pdf_path, api_key):
             "date": "YYYY-MM-DD",
             "total_value": float,
             "total_invested": float (Total versé depuis l'origine, 0.0 si absent),
-            "total_withdrawn": float,
             "fonds_euro_value": float,
             "uc_value": float,
             "fiscal_date": "YYYY-MM-DD",
             "management_profile": "string",
             "currency": "string" (Code à 3 lettres ex: EUR, CHF, USD),
             "dividends": float,
-            "fees": float
+            "fees": float,
+            "positions": [
+                {
+                    "name": "string (Nom exact de l'action, de l'ETF ou du fonds)",
+                    "asset_type": "string (ETF, Action, Obligation, UC, Fonds Euro)",
+                    "quantity": float (Nombre de parts, 0.0 si inconnu),
+                    "unit_price": float (Prix unitaire, 0.0 si inconnu),
+                    "total_value": float (Valeur totale de cette ligne)
+                }
+            ]
         }
-        Si une valeur est absente, mets 0.0 ou null. Ne réponds rien d'autre que le JSON.
+        Si une valeur est absente, mets 0.0 ou null. Le tableau "positions" doit contenir TOUTES les lignes d'investissement détaillées dans le document. Ne réponds rien d'autre que le JSON pur.
         """
         
         response = client.models.generate_content(
@@ -39,10 +47,8 @@ def check_quota_and_parse(pdf_path, api_key):
         end = raw_text.rfind('}') + 1
         data = json.loads(raw_text[start:end])
         data['tokens'] = usage
-        
-        # Sécurisation de la devise par défaut
-        if not data.get('currency'):
-            data['currency'] = "EUR"
+        if not data.get('currency'): data['currency'] = "EUR"
+        if not data.get('positions'): data['positions'] = []
             
         return data
     except Exception as e:
