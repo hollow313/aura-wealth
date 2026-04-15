@@ -5,10 +5,10 @@ def check_quota_and_parse(pdf_path, api_key):
     try:
         client = genai.Client(api_key=api_key)
         file_upload = client.files.upload(file=pdf_path)
-        time.sleep(10) # Sécurité pour le traitement
+        time.sleep(10)
         
         prompt = """
-        Tu es un analyste financier expert. Analyse ce relevé et extrais ce JSON :
+        Tu es un analyste financier expert. Analyse ce relevé et extrais UNIQUEMENT ce JSON :
         {
             "bank_name": "string",
             "account_type": "string",
@@ -19,13 +19,13 @@ def check_quota_and_parse(pdf_path, api_key):
             "total_withdrawn": float (Total racheté depuis l'origine),
             "fonds_euro_value": float (Valeur de l'épargne sur le fonds en euros),
             "uc_value": float (Valeur de l'épargne sur les unités de compte),
-            "fiscal_date": "YYYY-MM-DD" (Date d'effet fiscale),
-            "management_profile": "string" (ex: Mandat Équilibré),
+            "fiscal_date": "YYYY-MM-DD",
+            "management_profile": "string",
             "currency": "EUR",
             "dividends": float,
             "fees": float
         }
-        Si une valeur est absente ou 'N.C.', mets 0.0 ou null.
+        Si une valeur est absente, mets 0.0 ou null. Ne réponds rien d'autre que le JSON.
         """
         
         response = client.models.generate_content(
