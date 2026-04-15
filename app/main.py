@@ -11,9 +11,10 @@ from modules.charts import render_patrimoine_chart, render_account_history, rend
 from modules.notifications import send_discord_msg
 from fix_db import migrate
 
+# --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Aura Wealth Pro", page_icon="🌌", layout="wide", initial_sidebar_state="expanded")
 
-# --- RESET DES TOKENS ---
+# --- 2. RESET DES TOKENS ---
 def manage_token_resets(profile, db):
     today = datetime.now().date()
     current_week = today.isocalendar()[1]
@@ -28,7 +29,7 @@ def manage_token_resets(profile, db):
         updated = True
     if updated: db.commit()
 
-# --- API TAUX DE CHANGE ---
+# --- 3. API TAUX DE CHANGE ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_exchange_rates():
     try: return requests.get("https://open.er-api.com/v6/latest/EUR", timeout=3).json().get("rates", {"EUR": 1.0, "CHF": 0.98, "USD": 1.08})
@@ -40,7 +41,7 @@ def convert_to_eur(amount, currency):
     rate = rates.get(currency.upper(), 1.0)
     return amount / rate if rate > 0 else amount
 
-# --- INIT DB & AUTH ---
+# --- 4. INIT DB & AUTH ---
 db = SessionLocal()
 try: migrate() 
 except: pass
@@ -57,9 +58,9 @@ if not profile:
 
 manage_token_resets(profile, db)
 
-# --- SIDEBAR ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("🌌 Aura Pro v4.0")
+    st.title("🌌 Aura Pro")
     st.write(f"Utilisateur : **{user['username']}**")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     
@@ -91,9 +92,7 @@ if menu == "🌍 Dashboard":
                 gain_natif = last_r.total_value - inv_natif
                 pct = (gain_natif / inv_natif * 100) if inv_natif > 0 else 0
                 
-                # Tag spécifique pour les comptes manuels
                 type_display = f"{a.account_type} ✍️" if a.is_manual else a.account_type
-
                 val_str = f"{last_r.total_value:,.2f} {a.currency}"
                 if a.currency != "EUR": val_str += f" (~{convert_to_eur(last_r.total_value, a.currency):,.0f} €)"
                 
@@ -126,39 +125,50 @@ if menu == "🌍 Dashboard":
 elif menu == "💳 Mes Comptes":
     st.header("💳 Gestion & Ajout de comptes")
     
-    # NOUVEAU : SYSTÈME D'ONGLETS
     tab_import, tab_manual, tab_manage = st.tabs(["📥 Import PDF (IA)", "✍️ Saisie Manuelle (Livrets)", "📂 Gérer mes comptes"])
     
-    # ONGLET 1 : IMPORT IA (ANTI-FREEZE BLINDÉ)
+    # ONGLET 1 : IMPORT IA (Moteur v4.1 Anti-Freeze)
     with tab_import:
-        st.info("Recommandé pour : Assurance Vie, PEA, PER, Epargne Salariale (Amundi, Natixis)...")
-        up_file = st.file_uploader("Glissez votre relevé PDF ici", type="pdf")
+        st.info("Idéal pour : Assurance Vie, PEA, PER, Epargne Salariale (Amundi, Natixis)...")
+        up_file = st.file_uploader("Sélectionnez votre relevé PDF", type="pdf")
         
         if up_file:
             file_key = f"file_{up_file.file_id}"
             
             # Initialisation de l'état
             if file_key not in st.session_state:
-                st.session_state[file_key] = {"status": "uploaded", "data": None}
+                st.session_state[file_key] = {"status": "waiting_to_start", "data": None}
 
-            # Phase 1 : Analyse
-            if st.session_state[file_key]["status"] == "uploaded":
-                with st.spinner("🔮 Analyse Gemini en cours... Veuillez patienter."):
+            # Étape 1 : Le bouton d'amorce
+            if st.session_state[file_key]["status"] == "waiting_to_start":
+                st.success(f"Fichier `{up_file.name}` prêt à être analysé.")
+                if st.button("🚀 Lancer l'analyse IA de ce document", type="primary"):
+                    st.session_state[file_key]["status"] = "processing"
+                    st.rerun()
+
+            # Étape 2 : L'analyse (Le Spinner)
+            elif st.session_state[file_key]["status"] == "processing":
+                with st.spinner("🔮 L'IA lit votre document... Vous pouvez surveiller les logs de TrueNAS."):
                     t_path = f"/tmp/{up_file.name}"
-                    open(t_path, "wb").write(up_file.getvalue())
+                    with open(t_path, "wb") as f:
+                        f.write(up_file.getvalue())
+                    
                     res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
+                    
                     if "error" in res: 
                         st.error(res["error"])
+                        if st.button("Réessayer"):
+                            st.session_state[file_key]["status"] = "waiting_to_start"
+                            st.rerun()
                     else:
                         st.session_state[file_key]["data"] = res
-                        st.session_state[file_key]["status"] = "parsed"
+                        st.session_state[file_key]["status"] = "form"
                         st.rerun()
 
-            # Phase 2 : Formulaire de validation
-            elif st.session_state[file_key]["status"] == "parsed":
+            # Étape 3 : Le Formulaire de Validation
+            elif st.session_state[file_key]["status"] == "form":
                 res = st.session_state[file_key]["data"]
-                
-                with st.form(key=f"form_{file_key}"):
+                with st.form(key=f"form_{file_key}", border=True):
                     st.markdown(f"### 📋 Validation : {res.get('bank_name', 'Inconnu')}")
                     c1, c2, c3 = st.columns(3)
                     e_bank = c1.text_input("Banque", value=res.get("bank_name", ""))
@@ -171,12 +181,15 @@ elif menu == "💳 Mes Comptes":
                     e_inv = c5.number_input("Capital Versé", value=float(res.get("total_invested", 0.0)), step=10.0)
                     e_type = c6.text_input("Type de compte", value=res.get("account_type", ""))
                     
+                    with st.expander("Voir le détail brut (Actifs détectés)"):
+                        st.json(res.get("positions", []))
+                    
                     existing = db.query(Account).filter_by(user_id=user["username"]).all()
                     opts = {f"{a.bank_name} - {a.account_type} (N°{a.contract_number})": a.id for a in existing if not a.is_manual}
                     opts["➕ Créer un nouveau compte PDF"] = "NEW"
                     target = st.selectbox("Assigner à", options=opts.keys())
                     
-                    if st.form_submit_button("🚀 Sauvegarder", type="primary"):
+                    if st.form_submit_button("💾 Sauvegarder dans mon patrimoine", type="primary"):
                         acc_id = opts[target]
                         try: p_date = datetime.strptime(e_date, "%Y-%m-%d").date()
                         except: p_date = datetime.now().date()
@@ -193,26 +206,25 @@ elif menu == "💳 Mes Comptes":
                         for pos in res.get("positions", []):
                             db.add(Position(record_id=new_r.id, name=pos['name'], asset_type=pos.get('asset_type'), quantity=pos.get('quantity', 0), unit_price=pos.get('unit_price', 0), total_value=pos['total_value']))
                         
-                        # Consommation Tokens
                         tk = res.get("tokens", 0)
                         profile.token_used_weekly += tk
                         profile.token_used_daily += tk
                         profile.token_used_global += tk
                         
                         db.commit()
-                        st.session_state[file_key]["status"] = "saved"
+                        st.session_state[file_key]["status"] = "success"
                         st.rerun()
 
-            # Phase 3 : Succès
-            elif st.session_state[file_key]["status"] == "saved":
-                st.success("✅ Fichier importé avec succès ! Vous pouvez fermer ce fichier.")
+            # Étape 4 : Succès
+            elif st.session_state[file_key]["status"] == "success":
+                st.success("✅ Fichier importé avec succès ! (Fermez ce fichier en haut à droite pour en ajouter un autre).")
 
-    # ONGLET 2 : SAISIE MANUELLE (Livret A, LDD, etc.)
+    # ONGLET 2 : SAISIE MANUELLE
     with tab_manual:
-        st.info("Recommandé pour : Livret A, LDD, LEP, Comptes Courants (Comptes statiques).")
+        st.info("Recommandé pour : Livret A, LDD, LEP, Comptes Courants.")
         with st.form("manual_entry_form"):
             c_m1, c_m2 = st.columns(2)
-            m_bank = c_m1.text_input("Nom de la Banque (ex: Caisse d'Epargne, BoursoBank)")
+            m_bank = c_m1.text_input("Nom de la Banque (ex: Caisse d'Epargne)")
             m_type = c_m2.selectbox("Type de Compte", ["Livret A", "LDDS", "LEP", "Compte Courant", "PEL", "Autre"])
             
             c_m3, c_m4 = st.columns(2)
@@ -221,17 +233,14 @@ elif menu == "💳 Mes Comptes":
             
             if st.form_submit_button("💾 Ajouter ce compte", type="primary"):
                 if m_bank:
-                    # Recherche d'un compte manuel existant similaire
                     exist_m = db.query(Account).filter_by(user_id=user["username"], bank_name=m_bank, account_type=m_type, is_manual=True).first()
-                    
                     if not exist_m:
                         exist_m = Account(user_id=user["username"], bank_name=m_bank, account_type=m_type, currency="EUR", total_invested=m_val, is_manual=True)
                         db.add(exist_m); db.commit(); db.refresh(exist_m)
                     else:
-                        exist_m.total_invested = m_val # Pour un livret, Capital = Valeur
+                        exist_m.total_invested = m_val 
                     
-                    new_m_rec = Record(account_id=exist_m.id, date_releve=m_date, total_value=m_val, total_invested=m_val, fonds_euro_value=m_val)
-                    db.add(new_m_rec)
+                    db.add(Record(account_id=exist_m.id, date_releve=m_date, total_value=m_val, total_invested=m_val, fonds_euro_value=m_val))
                     db.commit()
                     st.success(f"{m_type} enregistré !")
                 else:
@@ -279,7 +288,6 @@ elif menu == "⚙️ Paramètres":
 # --- PAGE : ADMIN ---
 elif menu == "🛡️ Admin":
     st.header("🛡️ Administration des Ressources")
-    
     tot_jour = db.query(func.sum(UserProfile.token_used_daily)).scalar() or 0
     st.subheader("🌐 Consommation API Gemini (Aujourd'hui)")
     col_api, col_users = st.columns([0.7, 0.3])
