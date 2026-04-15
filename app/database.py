@@ -1,10 +1,7 @@
-from sqlalchemy import create_engine, Column, Integer, Float, String, Date, ForeignKey, Boolean, Text
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy import Column, Integer, Float, String, Date, ForeignKey, Boolean, Text
+from sqlalchemy.orm import relationship, declarative_base
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/aura_db")
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 class UserProfile(Base):
@@ -24,6 +21,8 @@ class Account(Base):
     bank_name = Column(String)
     account_type = Column(String)
     currency = Column(String, default="EUR")
+    # Nouveau : Capital total versé par l'utilisateur
+    total_invested = Column(Float, default=0.0) 
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
 class Record(Base):
@@ -35,5 +34,3 @@ class Record(Base):
     dividends = Column(Float, default=0.0)
     fees = Column(Float, default=0.0)
     account = relationship("Account", back_populates="records")
-
-Base.metadata.create_all(bind=engine)
