@@ -1,24 +1,21 @@
-# L'erreur venait d'ici : il manquait "Boolean" à la fin de cette première ligne !
-from sqlalchemy import create_engine, Column, Integer, Float, String, Date, ForeignKey, Boolean
+from sqlalchemy import create_engine, Column, Integer, Float, String, Date, ForeignKey, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:ton_mot_de_passe_robuste@localhost:5432/aura_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/aura_db")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-class GlobalSettings(Base):
-    __tablename__ = 'settings'
+class UserProfile(Base):
+    __tablename__ = 'user_profiles'
     id = Column(Integer, primary_key=True)
-    max_daily_tokens = Column(Integer, default=100000)
-    chf_eur_rate = Column(Float, default=1.03)
-
-class TokenUsage(Base):
-    __tablename__ = 'token_usage'
-    id = Column(Integer, primary_key=True)
-    date = Column(Date, unique=True)
-    tokens_used = Column(Integer, default=0)
+    username = Column(String, unique=True, index=True)
+    show_chf = Column(Boolean, default=False)
+    token_limit = Column(Integer, default=100000)
+    token_used = Column(Integer, default=0)
+    notify_discord = Column(Boolean, default=False)
+    discord_webhook = Column(Text, nullable=True)
 
 class Account(Base):
     __tablename__ = 'accounts'
@@ -26,9 +23,7 @@ class Account(Base):
     user_id = Column(String, index=True)
     bank_name = Column(String)
     account_type = Column(String)
-    currency = Column(String)
-    
-    # Lien avec l'historique
+    currency = Column(String, default="EUR")
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
 class Record(Base):
@@ -37,14 +32,8 @@ class Record(Base):
     account_id = Column(Integer, ForeignKey('accounts.id'))
     date_releve = Column(Date)
     total_value = Column(Float)
-    
+    dividends = Column(Float, default=0.0)
+    fees = Column(Float, default=0.0)
     account = relationship("Account", back_populates="records")
 
-class UserProfile(Base):
-    __tablename__ = 'user_profiles'
-    id = Column(Integer, primary_key=True)
-    username = Column(String, unique=True, index=True)
-    show_chf = Column(Boolean, default=False)
-
-# Cette ligne demande à SQLAlchemy de créer les tables automatiquement si elles n'existent pas
 Base.metadata.create_all(bind=engine)
