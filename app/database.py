@@ -2,7 +2,6 @@ from sqlalchemy import create_engine, Column, Integer, Float, String, Date, Fore
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import os
 
-# Configuration de la connexion
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/aura_db")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -24,11 +23,11 @@ class Account(Base):
     user_id = Column(String, index=True)
     bank_name = Column(String)
     account_type = Column(String)
-    contract_number = Column(String) # Identifiant unique du contrat
+    contract_number = Column(String)
     currency = Column(String, default="EUR")
-    total_invested = Column(Float, default=0.0) 
-    fiscal_date = Column(Date, nullable=True) # Utile pour le calcul des 8 ans
-    management_profile = Column(String, nullable=True) # Ex: Mandat Equilibré
+    total_invested = Column(Float, default=0.0) # Capital actuel (Dernier connu)
+    fiscal_date = Column(Date, nullable=True)
+    management_profile = Column(String, nullable=True)
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
 class Record(Base):
@@ -37,6 +36,7 @@ class Record(Base):
     account_id = Column(Integer, ForeignKey('accounts.id'))
     date_releve = Column(Date)
     total_value = Column(Float)
+    total_invested = Column(Float, default=0.0) # Capital à l'instant T (NOUVEAU)
     total_withdrawn = Column(Float, default=0.0)
     fonds_euro_value = Column(Float, default=0.0)
     uc_value = Column(Float, default=0.0)
