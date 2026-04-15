@@ -20,9 +20,11 @@ class Account(Base):
     user_id = Column(String, index=True)
     bank_name = Column(String)
     account_type = Column(String)
+    contract_number = Column(String) # Nouveau
     currency = Column(String, default="EUR")
-    # Nouveau : Capital total versé par l'utilisateur
     total_invested = Column(Float, default=0.0) 
+    fiscal_date = Column(Date, nullable=True) # Nouveau
+    management_profile = Column(String, nullable=True) # Nouveau
     records = relationship("Record", back_populates="account", cascade="all, delete-orphan")
 
 class Record(Base):
@@ -31,6 +33,9 @@ class Record(Base):
     account_id = Column(Integer, ForeignKey('accounts.id'))
     date_releve = Column(Date)
     total_value = Column(Float)
+    total_withdrawn = Column(Float, default=0.0) # Nouveau : Total racheté
+    fonds_euro_value = Column(Float, default=0.0) # Nouveau : Montant sur fonds euros
+    uc_value = Column(Float, default=0.0)        # Nouveau : Montant sur UC
     dividends = Column(Float, default=0.0)
     fees = Column(Float, default=0.0)
     account = relationship("Account", back_populates="records")
