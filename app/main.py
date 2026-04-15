@@ -14,7 +14,7 @@ from fix_db import migrate
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Aura Wealth Pro", page_icon="🌌", layout="wide", initial_sidebar_state="expanded")
 
-# --- 2. GESTION DES TOKENS (Reset Journalier / Hebdo) ---
+# --- 2. GESTION DES TOKENS ---
 def manage_token_resets(profile, db):
     today = datetime.now().date()
     current_week = today.isocalendar()[1]
@@ -60,7 +60,7 @@ manage_token_resets(profile, db)
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("🌌 Aura Pro v4.2")
+    st.title("🌌 Aura Pro v4.3")
     st.write(f"Utilisateur : **{user['username']}**")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     
@@ -85,11 +85,9 @@ if menu == "🌍 Dashboard":
                 total_inv_eur += convert_to_eur(last_r.total_invested or 0, a.currency)
                 total_val_eur += convert_to_eur(last_r.total_value or 0, a.currency)
                 
-                # Si c'est un compte manuel, on considère que c'est du fonds sécurisé (Livre A, LDD...)
                 euro_val = (last_r.total_value or 0) if a.is_manual else (last_r.fonds_euro_value or 0)
                 total_euro_eur += convert_to_eur(euro_val, a.currency)
                 total_uc_eur += convert_to_eur(last_r.uc_value or 0, a.currency)
-                
                 total_div_eur += convert_to_eur(sum(r.dividends for r in a.records if r.dividends), a.currency)
                 
                 inv_natif = last_r.total_invested or 0
@@ -120,58 +118,60 @@ if menu == "🌍 Dashboard":
         with c_r: render_allocation_chart(total_euro_eur, total_uc_eur)
         
         st.subheader("📋 Résumé des Portefeuilles")
-        st.dataframe(pd.DataFrame(perf_summary), hide_index=True, width='stretch') # CORRECTION LOG STREAMLIT
+        st.dataframe(pd.DataFrame(perf_summary), hide_index=True)
         
         if all_positions:
             st.subheader("🔍 Détail des Actifs (ETF, Fonds, Actions)")
-            st.dataframe(pd.DataFrame(all_positions), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(all_positions), hide_index=True)
 
 # --- PAGE : MES COMPTES ---
 elif menu == "💳 Mes Comptes":
-    st.header("💳 Gestion & Importation")
+    st.header("💳 Gestion & Ajout de comptes")
     
     tab_import, tab_manual, tab_manage = st.tabs(["📥 Import PDF (IA)", "✍️ Saisie Manuelle (Livrets)", "📂 Gérer mes comptes"])
     
-    # ONGLET 1 : IMPORT IA (Machine Anti-Freeze Absolue)
+    # ONGLET 1 : IMPORT IA (MOTEUR ANTI-FREEZE ABSOLU)
     with tab_import:
         st.info("Recommandé pour : Assurance Vie, PEA, Epargne Salariale (Amundi, Natixis)...")
-        up_file = st.file_uploader("Glissez votre relevé PDF ici", type="pdf")
+        up_file = st.file_uploader("Sélectionnez votre relevé PDF", type="pdf")
         
         if up_file:
-            file_key = f"file_{up_file.file_id}"
+            file_id = f"pdf_{up_file.file_id}"
             
-            if file_key not in st.session_state:
-                st.session_state[file_key] = {"state": "waiting"}
+            # Initialisation
+            if file_id not in st.session_state:
+                st.session_state[file_id] = {"parsed": False, "saved": False, "data": None}
                 
-            # Étape 1 : Attente d'action
-            if st.session_state[file_key]["state"] == "waiting":
-                st.success(f"📄 Fichier `{up_file.name}` chargé en mémoire.")
+            state = st.session_state[file_id]
+            
+            # SI DÉJÀ SAUVEGARDÉ
+            if state["saved"]:
+                st.success("✅ Fichier importé avec succès dans votre patrimoine ! Fermez-le (croix) pour en ajouter un autre.")
+                
+            # SI NON ANALYSÉ
+            elif not state["parsed"]:
+                # LA MAGIE ANTI-FREEZE : L'IA tourne PENDANT le clic, sans rechargement préalable.
                 if st.button("🚀 Lancer l'analyse IA", type="primary"):
-                    st.session_state[file_key]["state"] = "processing"
-                    st.rerun()
-                    
-            # Étape 2 : Traitement IA
-            elif st.session_state[file_key]["state"] == "processing":
-                with st.spinner("🔮 Gemini lit votre document... (Regardez les logs TrueNAS en cas de doute)"):
-                    t_path = f"/tmp/{up_file.name}"
-                    open(t_path, "wb").write(up_file.getvalue())
-                    res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
-                    if "error" in res:
-                        st.error(res["error"])
-                        if st.button("Réessayer"):
-                            st.session_state[file_key]["state"] = "waiting"
+                    with st.spinner("🔮 L'IA lit votre document... (Regardez la console TrueNAS)"):
+                        t_path = f"/tmp/{up_file.name}"
+                        open(t_path, "wb").write(up_file.getvalue())
+                        
+                        res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
+                        
+                        if "error" in res:
+                            st.error(res["error"])
+                        else:
+                            # Enregistrement et bascule vers le formulaire
+                            st.session_state[file_id]["parsed"] = True
+                            st.session_state[file_id]["data"] = res
                             st.rerun()
-                    else:
-                        st.session_state[file_key]["data"] = res
-                        st.session_state[file_key]["state"] = "form"
-                        st.rerun()
-
-            # Étape 3 : Formulaire de Validation
-            elif st.session_state[file_key]["state"] == "form":
-                res = st.session_state[file_key]["data"]
-                with st.form(key=f"form_{file_key}"):
+                            
+            # SI ANALYSÉ MAIS NON SAUVEGARDÉ (Le Formulaire)
+            elif state["parsed"] and not state["saved"]:
+                res = state["data"]
+                with st.form(key=f"form_{file_id}", border=True):
                     st.markdown("### 📋 Validation et Corrections")
-                    st.info("💡 L'IA a pré-rempli ces champs. Corrigez-les si nécessaire.")
+                    st.info("💡 Modifiez les valeurs ci-dessous si l'IA s'est trompée.")
                     
                     c1, c2, c3 = st.columns(3)
                     e_bank = c1.text_input("Banque", value=res.get("bank_name", ""))
@@ -184,15 +184,15 @@ elif menu == "💳 Mes Comptes":
                     e_inv = c5.number_input("Capital Versé (ou Versements Nets)", value=float(res.get("total_invested", 0.0)), step=10.0)
                     e_type = c6.text_input("Type de compte", value=res.get("account_type", ""))
                     
-                    with st.expander("Voir les actifs extraits par l'IA"):
+                    with st.expander("Voir le détail brut (Actifs détectés)"):
                         st.json(res.get("positions", []))
                     
                     existing = db.query(Account).filter_by(user_id=user["username"]).all()
                     opts = {f"{a.bank_name} - {a.account_type} (N°{a.contract_number})": a.id for a in existing if not a.is_manual}
-                    opts["➕ Créer un nouveau compte"] = "NEW"
+                    opts["➕ Créer un nouveau compte PDF"] = "NEW"
                     target = st.selectbox("Assigner à :", options=opts.keys())
                     
-                    if st.form_submit_button("🚀 Valider l'import", type="primary"):
+                    if st.form_submit_button("💾 Sauvegarder dans mon patrimoine", type="primary"):
                         acc_id = opts[target]
                         try: p_date = datetime.strptime(e_date, "%Y-%m-%d").date()
                         except: p_date = datetime.now().date()
@@ -214,20 +214,25 @@ elif menu == "💳 Mes Comptes":
                         profile.token_used_daily += tk
                         profile.token_used_global += tk
                         
+                        # Gestion fichier
+                        store_dir = f"/app/storage/{user['username']}/{acc_id}"
+                        os.makedirs(store_dir, exist_ok=True)
+                        t_path = f"/tmp/{up_file.name}"
+                        if os.path.exists(t_path):
+                            shutil.move(t_path, f"{store_dir}/{e_date}.pdf")
+                        
                         db.commit()
-                        st.session_state[file_key]["state"] = "saved"
+                        if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {e_bank} OK.")
+                        
+                        st.session_state[file_id]["saved"] = True
                         st.rerun()
 
-            # Étape 4 : Fin
-            elif st.session_state[file_key]["state"] == "saved":
-                st.success("✅ Document importé avec succès. Fermez-le (croix) pour en importer un autre.")
-
-    # ONGLET 2 : SAISIE MANUELLE (Livrets A, LDD...)
+    # ONGLET 2 : SAISIE MANUELLE
     with tab_manual:
-        st.info("Recommandé pour : Livret A, LDDS, LEP, Comptes Courants (Comptes Statiques).")
+        st.info("Recommandé pour : Livret A, LDDS, LEP, Comptes Courants.")
         with st.form("manual_form", border=True):
             cm1, cm2 = st.columns(2)
-            m_bank = cm1.text_input("Nom de la Banque (ex: Caisse d'Epargne, BoursoBank)")
+            m_bank = cm1.text_input("Nom de la Banque (ex: Caisse d'Epargne)")
             m_type = cm2.selectbox("Type de Compte", ["Livret A", "LDDS", "LEP", "Compte Courant", "PEL", "Autre"])
             
             cm3, cm4 = st.columns(2)
