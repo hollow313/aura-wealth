@@ -5,7 +5,7 @@ def check_quota_and_parse(pdf_path, api_key):
     try:
         client = genai.Client(api_key=api_key)
         file_upload = client.files.upload(file=pdf_path)
-        time.sleep(8) # Temps de digestion Google
+        time.sleep(10) # Sécurité pour le traitement
         
         prompt = """
         Analyse ce relevé financier et extrais UNIQUEMENT ce JSON :
@@ -13,6 +13,7 @@ def check_quota_and_parse(pdf_path, api_key):
             "bank_name": "string",
             "account_type": "string",
             "total_value": float,
+            "total_invested": float, (Chercher 'Total versé depuis l'origine' ou cumul des primes)
             "currency": "string",
             "date": "YYYY-MM-DD",
             "dividends": float,
