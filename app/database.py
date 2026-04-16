@@ -21,6 +21,7 @@ class UserProfile(Base):
     notify_discord = Column(Boolean, default=False)
     discord_webhook = Column(Text, nullable=True)
 
+# --- TABLES PATRIMOINE (PDF & Investissements) ---
 class Account(Base):
     __tablename__ = 'accounts'
     id = Column(Integer, primary_key=True)
@@ -60,5 +61,26 @@ class Position(Base):
     unit_price = Column(Float, default=0.0)
     total_value = Column(Float, default=0.0)
     record = relationship("Record", back_populates="positions")
+
+# --- TABLES BUDGET & COMPTES COURANTS (CSV) ---
+class BankAccount(Base):
+    __tablename__ = 'bank_accounts'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, index=True)
+    bank_name = Column(String)
+    account_name = Column(String)
+    transactions = relationship("BankTransaction", back_populates="account", cascade="all, delete-orphan")
+
+class BankTransaction(Base):
+    __tablename__ = 'bank_transactions'
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('bank_accounts.id'))
+    date = Column(Date)
+    value_date = Column(Date, nullable=True)
+    amount = Column(Float)
+    label = Column(String)
+    balance = Column(Float, nullable=True)
+    category = Column(String, default="Autre")
+    account = relationship("BankAccount", back_populates="transactions")
 
 Base.metadata.create_all(bind=engine)
