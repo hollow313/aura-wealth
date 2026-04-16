@@ -14,7 +14,7 @@ from fix_db import migrate
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Aura Wealth Pro", page_icon="🌌", layout="wide", initial_sidebar_state="expanded")
 
-# Fonction utilitaire ultra-robuste pour éviter les plantages de la base de données
+# Convertisseur sécurisé pour éviter les crashs d'insertion PostgreSQL
 def safe_float(value):
     try:
         if value is None or value == "": return 0.0
@@ -57,8 +57,13 @@ except: pass
 
 try:
     user = get_user_info()
-    if not user or not user.get("username"): st.warning("Veuillez vous connecter."); st.stop()
-except: st.stop()
+    if not user or not user.get("username"): 
+        st.warning("Veuillez vous connecter.")
+        db.close() # SECU: Fermeture avant stop
+        st.stop()
+except: 
+    db.close()
+    st.stop()
 
 profile = db.query(UserProfile).filter_by(username=user["username"]).first()
 if not profile:
@@ -69,7 +74,7 @@ manage_token_resets(profile, db)
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("🌌 Aura Pro v5.2")
+    st.title("🌌 Aura Pro v5.3 (Stable)")
     st.write(f"Utilisateur : **{user['username']}**")
     menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
     
@@ -137,7 +142,7 @@ elif menu == "💳 Mes Comptes":
     
     tab_import, tab_manual, tab_manage = st.tabs(["📥 Import PDF (IA)", "✍️ Saisie Manuelle (Livrets)", "📂 Gérer mes comptes"])
     
-    # ONGLET 1 : IMPORT IA (Fluide et sans st.rerun intrusif)
+    # ONGLET 1 : IMPORT IA (Logique fluide d'hier + Protection Base de Données)
     with tab_import:
         st.info("Recommandé pour : Assurance Vie, PEA, Epargne Salariale (Amundi, Natixis)...")
         up_file = st.file_uploader("Glissez votre relevé PDF ici", type="pdf")
@@ -145,9 +150,9 @@ elif menu == "💳 Mes Comptes":
         if up_file:
             file_key = f"pdf_{up_file.file_id}"
             
-            # 1. Traitement immédiat au Drop
+            # 1. Analyse IA si pas encore fait (Exécution immédiate)
             if file_key not in st.session_state:
-                with st.status("🔮 L'IA analyse votre document... (Patientez environ 10s)", expanded=True) as status:
+                with st.spinner("🔮 L'IA analyse votre document... (Regardez la console TrueNAS)"):
                     t_path = f"/tmp/{up_file.name}"
                     open(t_path, "wb").write(up_file.getvalue())
                     
@@ -155,20 +160,19 @@ elif menu == "💳 Mes Comptes":
                     
                     if "error" in res:
                         st.error(res["error"])
-                        status.update(label="❌ Erreur d'analyse", state="error")
                     else:
                         st.session_state[file_key] = res
                         st.session_state[f"path_{file_key}"] = t_path
-                        status.update(label="✅ Analyse terminée !", state="complete")
-                # Le code continue naturellement sans rerun, évitant le freeze absolu.
+                        db.close() # SECU: On ferme avant de recharger la page
+                        st.rerun()
 
-            # 2. Formulaire affiché une fois le dict présent dans le state
-            if isinstance(st.session_state.get(file_key), dict):
+            # 2. Formulaire de validation
+            elif file_key in st.session_state and st.session_state[file_key] is not True:
                 res = st.session_state[file_key]
                 
                 with st.form(key=f"form_{file_key}", border=True):
                     st.markdown("### 📋 Validation et Corrections")
-                    st.info("💡 Modifiez les montants si nécessaire (Ex: Renseignez le Capital Versé pour 2020).")
+                    st.info("💡 L'IA a pré-rempli les montants. Modifiez-les si nécessaire (ex: Capital Versé manquant sur les vieux relevés).")
                     
                     c1, c2, c3 = st.columns(3)
                     e_bank = c1.text_input("Banque", value=res.get("bank_name", ""))
@@ -181,7 +185,7 @@ elif menu == "💳 Mes Comptes":
                     e_inv = c5.number_input("Capital Versé (ou Versements Nets)", value=safe_float(res.get("total_invested")), step=10.0)
                     e_type = c6.text_input("Type de compte", value=res.get("account_type", ""))
                     
-                    with st.expander("Voir le détail brut des actifs détectés"):
+                    with st.expander("Voir le détail des actifs détectés (JSON brut)"):
                         st.json(res.get("positions", []))
                     
                     existing = db.query(Account).filter_by(user_id=user["username"]).all()
@@ -205,7 +209,7 @@ elif menu == "💳 Mes Comptes":
                             new_r = Record(account_id=acc_id, date_releve=p_date, total_value=e_val, total_invested=e_inv, fonds_euro_value=safe_float(res.get("fonds_euro_value")), uc_value=safe_float(res.get("uc_value")), dividends=safe_float(res.get("dividends")))
                             db.add(new_r); db.commit(); db.refresh(new_r)
                             
-                            # Insertion sécurisée
+                            # Enregistrement des lignes d'actifs avec le convertisseur sécurisé (anti-crash)
                             for pos in res.get("positions", []):
                                 new_pos = Position(
                                     record_id=new_r.id, 
@@ -222,24 +226,27 @@ elif menu == "💳 Mes Comptes":
                             profile.token_used_daily += tk
                             profile.token_used_global += tk
                             
+                            # Stockage du fichier physique
                             store_dir = f"/app/storage/{user['username']}/{acc_id}"
                             os.makedirs(store_dir, exist_ok=True)
                             t_path = st.session_state.get(f"path_{file_key}")
-                            if t_path and os.path.exists(t_path): shutil.move(t_path, f"{store_dir}/{e_date}.pdf")
+                            if t_path and os.path.exists(t_path):
+                                shutil.move(t_path, f"{store_dir}/{e_date}.pdf")
                             
                             db.commit()
                             if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {e_bank} OK.")
                             
-                            st.session_state[file_key] = True # Marqué comme terminé
+                            st.session_state[file_key] = True # Terminé
+                            db.close() # SECU: Fermeture de la base avant le rafraîchissement
                             st.rerun()
                             
                         except Exception as err:
-                            db.rollback()
-                            st.error(f"❌ Erreur technique lors de l'enregistrement : {err}")
+                            db.rollback() # On annule la transaction si erreur
+                            st.error(f"❌ Erreur lors de la sauvegarde : {err}")
             
-            # 3. Fin de boucle
-            if st.session_state.get(file_key) is True:
-                st.success("✅ Document importé et sauvegardé avec succès ! Fermez le fichier avec la croix rouge pour en ajouter un autre.")
+            # 3. Fin de l'import
+            elif st.session_state.get(file_key) is True:
+                st.success("✅ Document importé avec succès ! Fermez le fichier avec la croix rouge pour en ajouter un autre.")
 
     # ONGLET 2 : SAISIE MANUELLE
     with tab_manual:
@@ -278,7 +285,9 @@ elif menu == "💳 Mes Comptes":
                 c_info, c_del = st.columns([0.8, 0.2])
                 c_info.write(f"Capital Actuel : **{acc.total_invested:,.2f} {acc.currency}**")
                 if c_del.button("🗑️ Supprimer", key=f"del_acc_{acc.id}"): 
-                    db.delete(acc); db.commit(); st.rerun()
+                    db.delete(acc); db.commit()
+                    db.close() # SECU
+                    st.rerun()
                 if acc.records: render_account_history(acc.records)
 
 # --- PAGE : EXPORT ---
@@ -305,7 +314,9 @@ elif menu == "⚙️ Paramètres":
         for a in db.query(Account).filter_by(user_id=user["username"]).all(): db.delete(a)
         u_path = f"/app/storage/{user['username']}"
         if os.path.exists(u_path): shutil.rmtree(u_path)
-        db.commit(); st.rerun()
+        db.commit()
+        db.close() # SECU
+        st.rerun()
 
 # --- PAGE : ADMIN ---
 elif menu == "🛡️ Admin":
@@ -324,6 +335,9 @@ elif menu == "🛡️ Admin":
             c2.write(f"📅 Jour : {p.token_used_daily:,}")
             c3.write(f"🗓️ Hebdo : {p.token_used_weekly:,} / {p.token_limit_weekly:,}")
             nl = c4.number_input("Quota", value=p.token_limit_weekly, key=f"l_{p.id}", step=10000)
-            if nl != p.token_limit_weekly: p.token_limit_weekly = nl; db.commit(); st.rerun()
+            if nl != p.token_limit_weekly: 
+                p.token_limit_weekly = nl; db.commit()
+                db.close() # SECU
+                st.rerun()
 
 db.close()
