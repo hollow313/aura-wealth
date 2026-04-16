@@ -3,7 +3,6 @@ import time
 import logging
 from google import genai
 
-# Configuration pour forcer l'affichage dans la console Docker/TrueNAS
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -15,27 +14,24 @@ def check_quota_and_parse(pdf_path, api_key):
         logger.info("🚀 [AURA] Upload du document vers Gemini...")
         file_upload = client.files.upload(file=pdf_path)
         
-        logger.info("🚀 [AURA] Document uploadé. Pause de 5 secondes pour stabilisation...")
+        logger.info("🚀 [AURA] Document uploadé. Pause de 5 secondes...")
         time.sleep(5) 
         
         prompt = """
-        Tu es un auditeur financier expert. Analyse ce relevé (Assurance Vie Generali/Bourso, PEA, ou Epargne Salariale PEE/PEG/PER Amundi/Natixis) et extrais ce JSON STRICTEMENT.
+        Tu es un analyste financier. Analyse ce relevé de compte ou d'épargne et extrais les données pour remplir ce JSON STRICTEMENT.
 
-        RÈGLES D'EXTRACTION FINANCIÈRE (TRÈS IMPORTANT) :
-        1. "total_invested" (Capital Versé) : Cherche "Total versé depuis l'origine". SI ABSENT (notamment sur les relevés 2020/2021), va dans la section 'Fiscalité' ou 'Informations Fiscales' et prends le montant du "Cumul des primes versées". Si Epargne salariale, prends les versements nets/contributions.
-        2. "dividends" (Primes & Intéressement) : 
-           - Chez AMUNDI : Cherche la ligne "Contributions de votre entreprise", "Intéressement et/ou Participation net directement perçu" ou "Abondement".
-           - Chez NATIXIS : Cherche dans le tableau des opérations de l'année les lignes "Intéressement", "Participation" et "Abondement".
-           - Additionne TOUTES ces primes de l'entreprise et mets le total ici. Si absent, mets 0.0.
-        3. "fonds_euro_value" : Somme des fonds sécurisés (Eurossima, Netissima, Fonds en euros).
-        4. "uc_value" : Somme des Unités de Compte, actions, ETF.
-        5. "positions" : Liste CHAQUE actif présent avec sa quantité et son prix unitaire.
-        6. S'il y a un PEG et un PER sur le même document, fusionne le tout dans 'total_value'.
+        CONSIGNES :
+        1. Va à l'essentiel. Ne cherche pas à interpréter des données complexes.
+        2. "total_invested" : Cherche "Total versé depuis l'origine" ou "Cumul des primes versées". Si ce n'est pas clairement indiqué, mets 0.0.
+        3. "total_value" : La valeur totale du compte à la date du relevé.
+        4. "fonds_euro_value" : Montant sécurisé en euros (Eurossima, Netissima, etc).
+        5. "uc_value" : Montant investi sur les marchés (Unités de compte).
+        6. "positions" : La liste des actifs détenus (fonds, actions, etc) avec la quantité et la valeur.
 
         FORMAT JSON REQUIS :
         {
-            "bank_name": "string (ex: Generali, BoursoBank, Amundi, Natixis)",
-            "account_type": "string (ex: Assurance Vie, Epargne Salariale, PEG, PER)",
+            "bank_name": "string (ex: Generali, Boursorama, Amundi, Natixis)",
+            "account_type": "string (ex: Assurance Vie, PEA, Epargne Salariale)",
             "contract_number": "string",
             "date": "YYYY-MM-DD",
             "total_value": float,
@@ -61,7 +57,7 @@ def check_quota_and_parse(pdf_path, api_key):
         usage = response.usage_metadata.total_token_count if hasattr(response, 'usage_metadata') else 0
         raw_text = response.text.strip()
         
-        # Nettoyage robuste du Markdown (```json ... ```)
+        # Nettoyage robuste du Markdown
         if "```json" in raw_text:
             raw_text = raw_text.split("```json")[1]
         elif "```" in raw_text:
