@@ -33,7 +33,7 @@ try:
 
     # --- MENU DE NAVIGATION ---
     with st.sidebar:
-        st.title("🌌 Aura Pro v11.0")
+        st.title("🌌 Aura Pro")
         st.write(f"Utilisateur : **{user['username']}**")
         
         pages = ["🌍 Dashboard", "💳 Patrimoine & PDF", "💸 Budget & Dépenses", "📑 Export", "⚙️ Paramètres"]
