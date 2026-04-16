@@ -11,10 +11,12 @@ from modules.charts import render_patrimoine_chart, render_account_history, rend
 from modules.notifications import send_discord_msg
 from fix_db import migrate
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Aura Wealth Pro", page_icon="🌌", layout="wide", initial_sidebar_state="expanded")
 
+# --- 2. FONCTIONS UTILITAIRES ---
 def safe_float(value):
+    """Évite les crashs PostgreSQL si l'IA renvoie du texte au lieu d'un chiffre"""
     try:
         if value is None or value == "": return 0.0
         if isinstance(value, str):
@@ -23,6 +25,7 @@ def safe_float(value):
     except: return 0.0
 
 def manage_token_resets(profile, db):
+    """Gère la remise à zéro automatique des quotas IA"""
     today = datetime.now().date()
     current_week = today.isocalendar()[1]
     updated = False
@@ -38,28 +41,32 @@ def manage_token_resets(profile, db):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_exchange_rates():
+    """Récupère les taux de change"""
     try: return requests.get("https://open.er-api.com/v6/latest/EUR", timeout=3).json().get("rates", {"EUR": 1.0, "CHF": 0.98, "USD": 1.08})
     except: return {"EUR": 1.0, "CHF": 0.98, "USD": 1.08}
 
 rates = get_exchange_rates()
 def convert_to_eur(amount, currency):
+    """Convertit une devise en Euro"""
     if currency == "EUR" or not currency: return amount
     rate = rates.get(currency.upper(), 1.0)
     return amount / rate if rate > 0 else amount
 
-# --- INITIALISATION GLOBALE AVEC PROTECTION FUITE MEMOIRE ---
-try:
-    migrate()
+# --- 3. INITIALISATION BASE DE DONNÉES ---
+try: migrate() 
 except: pass
 
 db = SessionLocal()
 
+# --- 4. CŒUR DE L'APPLICATION (Protégé par try/finally) ---
 try:
+    # Authentification
     user = get_user_info()
     if not user or not user.get("username"): 
         st.warning("Veuillez vous connecter.")
         st.stop()
 
+    # Création / Récupération du Profil
     profile = db.query(UserProfile).filter_by(username=user["username"]).first()
     if not profile:
         profile = UserProfile(username=user["username"], last_daily_reset=datetime.now().date(), last_weekly_reset=datetime.now().date().isocalendar()[1])
@@ -69,7 +76,7 @@ try:
 
     # --- SIDEBAR ---
     with st.sidebar:
-        st.title("🌌 Aura Pro v6.1")
+        st.title("🌌 Aura Pro v7.2")
         st.write(f"Utilisateur : **{user['username']}**")
         menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
         
@@ -82,8 +89,9 @@ try:
     if menu == "🌍 Dashboard":
         st.header("📈 Dashboard Patrimonial")
         accounts = db.query(Account).filter_by(user_id=user["username"]).all()
+        
         if not accounts:
-            st.info("👋 Bienvenue ! Ajoutez vos comptes (Livrets ou PDF) dans l'onglet **Mes Comptes**.")
+            st.info("👋 Bienvenue ! Ajoutez vos premiers comptes (Livrets ou PDF) dans l'onglet **Mes Comptes**.")
         else:
             total_inv_eur, total_val_eur, total_euro_eur, total_uc_eur, total_div_eur = 0, 0, 0, 0, 0
             perf_summary, all_positions = [], []
@@ -93,9 +101,13 @@ try:
                 if last_r:
                     total_inv_eur += convert_to_eur(last_r.total_invested or 0, a.currency)
                     total_val_eur += convert_to_eur(last_r.total_value or 0, a.currency)
+                    
+                    # Logique Sécurisé vs Risqué
                     euro_val = (last_r.total_value or 0) if a.is_manual else (last_r.fonds_euro_value or 0)
                     total_euro_eur += convert_to_eur(euro_val, a.currency)
                     total_uc_eur += convert_to_eur(last_r.uc_value or 0, a.currency)
+                    
+                    # Somme des dividendes/primes
                     total_div_eur += convert_to_eur(sum(r.dividends for r in a.records if r.dividends), a.currency)
                     
                     inv_natif = last_r.total_invested or 0
@@ -110,9 +122,11 @@ try:
                         "Compte": a.bank_name, "Type": type_display, "Capital": f"{inv_natif:,.2f} {a.currency}",
                         "Valeur": val_str, "Plus-Value": f"{gain_natif:+.2f} {a.currency}", "Perf.": f"{pct:+.2f}%"
                     })
+                    
                     for pos in last_r.positions:
                         all_positions.append({"Compte": a.bank_name, "Actif": pos.name, "Type": pos.asset_type, "Quantité": pos.quantity, "Valeur": f"{pos.total_value:,.2f} {a.currency}"})
 
+            # KPIs (Indicateurs clés)
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Capital Versé Global", f"{total_inv_eur:,.0f} €")
             k2.metric("Valeur Marché Globale", f"{total_val_eur:,.2f} €")
@@ -121,15 +135,19 @@ try:
             k4.metric("Primes / Intéressement", f"{total_div_eur:,.2f} €")
 
             st.divider()
+            
+            # Graphiques
             c_l, c_r = st.columns(2)
             with c_l: render_patrimoine_chart(accounts)
             with c_r: render_allocation_chart(total_euro_eur, total_uc_eur)
             
+            # Tableaux détaillés
             st.subheader("📋 Résumé des Portefeuilles")
-            st.dataframe(pd.DataFrame(perf_summary), hide_index=True)
+            st.dataframe(pd.DataFrame(perf_summary), hide_index=True, use_container_width=True)
+            
             if all_positions:
                 st.subheader("🔍 Détail des Actifs (ETF, Fonds, Actions)")
-                st.dataframe(pd.DataFrame(all_positions), hide_index=True)
+                st.dataframe(pd.DataFrame(all_positions), hide_index=True, use_container_width=True)
 
     # --- PAGE : MES COMPTES ---
     elif menu == "💳 Mes Comptes":
@@ -137,38 +155,42 @@ try:
         
         tab_import, tab_manual, tab_manage = st.tabs(["📥 Import PDF (IA)", "✍️ Saisie Manuelle (Livrets)", "📂 Gérer mes comptes"])
         
-        # ONGLET 1 : IMPORT IA 
+        # --- ONGLET : IMPORT IA ---
         with tab_import:
             st.info("Glissez votre relevé PDF (Assurance Vie, PEA, Amundi, Natixis...).")
             up_file = st.file_uploader("Fichier PDF", type="pdf", label_visibility="collapsed")
             
             if up_file:
+                # Utilisation du file_id pour éviter les crashs liés aux accents dans le nom du fichier
                 file_key = f"pdf_{up_file.file_id}"
                 
-                # 1. Analyse IA
+                # Phase 1 : Analyse IA
                 if file_key not in st.session_state and f"done_{file_key}" not in st.session_state:
-                    with st.spinner("🔮 L'IA lit votre document en profondeur... (Regardez les logs TrueNAS)"):
+                    with st.status("🔮 L'IA lit votre document en profondeur...", expanded=True) as status:
+                        t_path = f"/tmp/{up_file.file_id}.pdf"
                         
-                        # CORRECTION MAJEURE ICI : On utilise le file_id au lieu du nom du fichier
-                        # Cela évite le crash si le nom du fichier contient des accents (ex: "Relevé.pdf")
-                        t_path = f"/tmp/{up_file.file_id}.pdf" 
-                        open(t_path, "wb").write(up_file.getvalue())
-                        
+                        with open(t_path, "wb") as f:
+                            f.write(up_file.getvalue())
+                            
                         res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
+                        
                         if "error" in res:
                             st.error(res["error"])
+                            status.update(label="❌ Erreur d'analyse", state="error")
                         else:
                             st.session_state[file_key] = res
                             st.session_state[f"path_{file_key}"] = t_path
+                            status.update(label="✅ Analyse terminée !", state="complete")
+                            db.close() # Sécurité avant rechargement
                             st.rerun()
 
-                # 2. Formulaire de validation
-                if file_key in st.session_state:
+                # Phase 2 : Formulaire de validation
+                elif isinstance(st.session_state.get(file_key), dict):
                     res = st.session_state[file_key]
                     
                     with st.form(key=f"form_{file_key}", border=True):
                         st.markdown("### 📋 Validation et Corrections")
-                        st.info("L'IA a extrait ces montants. Vous pouvez les modifier avant sauvegarde.")
+                        st.info("💡 L'IA a extrait ces montants. Vous pouvez les corriger avant de sauvegarder.")
                         
                         c1, c2, c3 = st.columns(3)
                         e_bank = c1.text_input("Banque", value=res.get("bank_name", ""))
@@ -178,8 +200,10 @@ try:
                         
                         c4, c5, c6 = st.columns(3)
                         e_val = c4.number_input("Valeur Totale", value=safe_float(res.get("total_value")), step=10.0)
-                        e_inv = c5.number_input("Capital Versé (ou Versements Nets)", value=safe_float(res.get("total_invested")), step=10.0)
+                        e_inv = c5.number_input("Capital Versé (ou Versements)", value=safe_float(res.get("total_invested")), step=10.0)
                         e_type = c6.text_input("Type de compte", value=res.get("account_type", ""))
+                        
+                        e_div = st.number_input("Primes / Intéressement détectés", value=safe_float(res.get("dividends")), step=10.0)
                         
                         with st.expander("Voir le détail brut des actifs détectés"):
                             st.json(res.get("positions", []))
@@ -187,7 +211,7 @@ try:
                         existing = db.query(Account).filter_by(user_id=user["username"]).all()
                         opts = {f"{a.bank_name} - {a.account_type} (N°{a.contract_number})": a.id for a in existing if not a.is_manual}
                         opts["➕ Créer un nouveau compte PDF"] = "NEW"
-                        target = st.selectbox("Assigner à :", options=opts.keys())
+                        target = st.selectbox("Assigner ce relevé à :", options=opts.keys())
                         
                         if st.form_submit_button("💾 Sauvegarder dans mon patrimoine", type="primary"):
                             try:
@@ -195,6 +219,7 @@ try:
                                 try: p_date = datetime.strptime(e_date, "%Y-%m-%d").date()
                                 except: p_date = datetime.now().date()
 
+                                # Création ou Mise à jour du Compte
                                 if acc_id == "NEW":
                                     new_a = Account(user_id=user["username"], bank_name=e_bank, account_type=e_type, contract_number=res.get("contract_number"), currency=e_curr, total_invested=e_inv, is_manual=False)
                                     db.add(new_a); db.commit(); db.refresh(new_a); acc_id = new_a.id
@@ -202,9 +227,11 @@ try:
                                     a_obj = db.get(Account, acc_id)
                                     a_obj.total_invested = e_inv
 
-                                new_r = Record(account_id=acc_id, date_releve=p_date, total_value=e_val, total_invested=e_inv, fonds_euro_value=safe_float(res.get("fonds_euro_value")), uc_value=safe_float(res.get("uc_value")), dividends=safe_float(res.get("dividends")))
+                                # Création du Record
+                                new_r = Record(account_id=acc_id, date_releve=p_date, total_value=e_val, total_invested=e_inv, fonds_euro_value=safe_float(res.get("fonds_euro_value")), uc_value=safe_float(res.get("uc_value")), dividends=e_div)
                                 db.add(new_r); db.commit(); db.refresh(new_r)
                                 
+                                # Création des Positions (Lignes d'actifs)
                                 for pos in res.get("positions", []):
                                     new_pos = Position(
                                         record_id=new_r.id, 
@@ -216,43 +243,48 @@ try:
                                     )
                                     db.add(new_pos)
                                 
+                                # Mise à jour des quotas
                                 tk = res.get("tokens", 0)
                                 profile.token_used_weekly += tk
                                 profile.token_used_daily += tk
                                 profile.token_used_global += tk
                                 
+                                # Déplacement du fichier dans l'espace utilisateur
                                 store_dir = f"/app/storage/{user['username']}/{acc_id}"
                                 os.makedirs(store_dir, exist_ok=True)
                                 t_path = st.session_state.get(f"path_{file_key}")
-                                if t_path and os.path.exists(t_path): shutil.move(t_path, f"{store_dir}/{e_date}.pdf")
+                                if t_path and os.path.exists(t_path): 
+                                    shutil.move(t_path, f"{store_dir}/{e_date}.pdf")
                                 
                                 db.commit()
-                                if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import", f"Relevé {e_bank} OK.")
+                                if profile.notify_discord: send_discord_msg(profile.discord_webhook, "🌌 Import Aura", f"Nouveau relevé importé : {e_bank}")
                                 
                                 st.session_state[f"done_{file_key}"] = True
                                 del st.session_state[file_key]
-                                db.close() # SECU
+                                db.close() # Sécurité avant rechargement
                                 st.rerun()
                                 
                             except Exception as err:
                                 db.rollback()
-                                st.error(f"❌ Erreur lors de l'enregistrement en base : {err}")
+                                st.error(f"❌ Erreur lors de l'enregistrement en base de données : {err}")
                 
-                if f"done_{file_key}" in st.session_state:
-                    st.success("✅ Document sauvegardé avec succès ! Fermez le fichier (croix) pour en ajouter un autre.")
+                # Phase 3 : Succès
+                elif f"done_{file_key}" in st.session_state:
+                    st.success("✅ Document importé et sauvegardé avec succès ! Fermez le fichier (croix rouge) pour en ajouter un autre.")
 
-        # ONGLET 2 : SAISIE MANUELLE
+        # --- ONGLET : SAISIE MANUELLE ---
         with tab_manual:
+            st.info("Recommandé pour les comptes statiques : Livret A, LDDS, LEP, Comptes Courants.")
             with st.form("manual_form", border=True):
                 cm1, cm2 = st.columns(2)
-                m_bank = cm1.text_input("Nom de la Banque (ex: Caisse d'Epargne)")
+                m_bank = cm1.text_input("Nom de la Banque (ex: Caisse d'Epargne, BoursoBank)")
                 m_type = cm2.selectbox("Type de Compte", ["Livret A", "LDDS", "LEP", "Compte Courant", "PEL", "Autre"])
                 
                 cm3, cm4 = st.columns(2)
                 m_val = cm3.number_input("Solde Actuel (€)", step=100.0, min_value=0.0)
                 m_date = cm4.date_input("Date du solde", value=datetime.now())
                 
-                if st.form_submit_button("💾 Ajouter / Mettre à jour", type="primary"):
+                if st.form_submit_button("💾 Ajouter / Mettre à jour ce compte", type="primary"):
                     if m_bank:
                         exist_m = db.query(Account).filter_by(user_id=user["username"], bank_name=m_bank, account_type=m_type, is_manual=True).first()
                         if not exist_m:
@@ -263,77 +295,105 @@ try:
                         
                         db.add(Record(account_id=exist_m.id, date_releve=m_date, total_value=m_val, total_invested=m_val, fonds_euro_value=m_val))
                         db.commit()
-                        st.success(f"{m_type} enregistré !")
-                        db.close() # SECU
+                        st.success(f"Compte {m_type} enregistré !")
+                        db.close()
                         st.rerun()
                     else:
                         st.error("Veuillez renseigner le nom de la banque.")
 
-        # ONGLET 3 : GESTION DES COMPTES
+        # --- ONGLET : GESTION ---
         with tab_manage:
             accounts = db.query(Account).filter_by(user_id=user["username"]).all()
-            if not accounts: st.write("Aucun compte.")
+            if not accounts: st.write("Vous n'avez aucun compte d'enregistré pour le moment.")
+            
             for acc in accounts:
                 icon = "✍️" if acc.is_manual else "📂"
                 with st.expander(f"{icon} {acc.bank_name} - {acc.account_type} {f'(N°{acc.contract_number})' if acc.contract_number else ''}"):
                     c_info, c_del = st.columns([0.8, 0.2])
                     c_info.write(f"Capital Actuel : **{acc.total_invested:,.2f} {acc.currency}**")
+                    
                     if c_del.button("🗑️ Supprimer", key=f"del_acc_{acc.id}"): 
                         db.delete(acc); db.commit()
-                        db.close() # SECU
+                        db.close() # Sécurité avant rechargement
                         st.rerun()
-                    if acc.records: render_account_history(acc.records)
+                    
+                    if acc.records: 
+                        render_account_history(acc.records)
 
     # --- PAGE : EXPORT ---
     elif menu == "📑 Export":
-        st.header("📑 Exportation CSV")
+        st.header("📑 Exportation de vos données")
         accs = db.query(Account).filter_by(user_id=user["username"]).all()
         if accs:
-            if st.button("Générer l'export"):
-                data = [{"Banque": a.bank_name, "Type": a.account_type, "Manuel": a.is_manual, "Date": r.date_releve, "Valeur": r.total_value} for a in accs for r in a.records]
-                st.download_button("Télécharger", pd.DataFrame(data).to_csv(index=False), "export.csv")
+            st.write("Vous pouvez exporter l'intégralité de l'historique de vos comptes au format CSV.")
+            if st.button("Générer l'export CSV"):
+                data = [{"Banque": a.bank_name, "Type": a.account_type, "Saisie Manuelle": a.is_manual, "Date": r.date_releve, "Valeur": r.total_value} for a in accs for r in a.records]
+                st.download_button("Télécharger le fichier", pd.DataFrame(data).to_csv(index=False), "export_patrimoine.csv")
+        else:
+            st.info("Aucune donnée à exporter.")
 
     # --- PAGE : PARAMÈTRES ---
     elif menu == "⚙️ Paramètres":
-        st.header("⚙️ Configuration")
+        st.header("⚙️ Configuration du compte")
+        
         with st.container(border=True):
-            st.subheader("💱 Devises")
+            st.subheader("💱 Devises affichées")
             curr = profile.active_currencies.split(",") if profile.active_currencies else ["EUR"]
-            sel_c = st.multiselect("Devises actives", ["EUR", "CHF", "USD", "GBP", "CAD"], default=curr)
-            profile.notify_discord = st.toggle("Discord", profile.notify_discord)
-            profile.discord_webhook = st.text_input("Webhook", profile.discord_webhook, type="password")
-            if st.button("Enregistrer"): profile.active_currencies = ",".join(sel_c); db.commit(); st.success("OK")
+            sel_c = st.multiselect("Sélectionnez les devises que vous utilisez", ["EUR", "CHF", "USD", "GBP", "CAD"], default=curr)
+            
+            st.divider()
+            st.subheader("🔔 Notifications")
+            profile.notify_discord = st.toggle("Activer les notifications Discord", profile.notify_discord)
+            profile.discord_webhook = st.text_input("URL du Webhook Discord", profile.discord_webhook, type="password")
+            
+            if st.button("💾 Enregistrer les préférences", type="primary"): 
+                profile.active_currencies = ",".join(sel_c)
+                db.commit()
+                st.success("Paramètres enregistrés avec succès !")
 
-        if st.button("🚨 WIPE DATA", type="primary"):
-            for a in db.query(Account).filter_by(user_id=user["username"]).all(): db.delete(a)
+        st.divider()
+        st.subheader("Zone de danger")
+        if st.button("🚨 EFFACER TOUTES MES DONNÉES", type="primary"):
+            for a in db.query(Account).filter_by(user_id=user["username"]).all(): 
+                db.delete(a)
+            
             u_path = f"/app/storage/{user['username']}"
-            if os.path.exists(u_path): shutil.rmtree(u_path)
+            if os.path.exists(u_path): 
+                shutil.rmtree(u_path)
+            
             db.commit()
-            db.close() # SECU
+            db.close() # Sécurité avant rechargement
             st.rerun()
 
     # --- PAGE : ADMIN ---
     elif menu == "🛡️ Admin":
-        st.header("🛡️ Administration des Ressources API")
+        st.header("🛡️ Administration Système")
+        
         tot_jour = db.query(func.sum(UserProfile.token_used_daily)).scalar() or 0
-        st.subheader("🌐 Consommation API Gemini (Aujourd'hui)")
+        st.subheader("🌐 Consommation Globale API Gemini (Aujourd'hui)")
         col_api, col_users = st.columns([0.7, 0.3])
-        col_api.progress(min(tot_jour / 100000, 1.0), text=f"{tot_jour:,} / 100,000 tokens")
-        col_users.metric("Utilisateurs", db.query(UserProfile).count())
+        col_api.progress(min(tot_jour / 100000, 1.0), text=f"{tot_jour:,} tokens utilisés sur 100,000 (Limite Quotidienne API)")
+        col_users.metric("Nombre d'Utilisateurs", db.query(UserProfile).count())
 
         st.divider()
+        st.subheader("👥 Gestion des Quotas par Utilisateur")
+        
         for p in db.query(UserProfile).all():
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([0.2, 0.3, 0.3, 0.2])
                 c1.write(f"👤 **{p.username}**")
-                c2.write(f"📅 Jour : {p.token_used_daily:,}")
-                c3.write(f"🗓️ Hebdo : {p.token_used_weekly:,} / {p.token_limit_weekly:,}")
-                nl = c4.number_input("Quota", value=p.token_limit_weekly, key=f"l_{p.id}", step=10000)
+                c2.write(f"📅 Conso Jour : {p.token_used_daily:,}")
+                c3.write(f"🗓️ Conso Hebdo : {p.token_used_weekly:,} / {p.token_limit_weekly:,}")
+                
+                nl = c4.number_input("Modifier le Quota Hebdo", value=p.token_limit_weekly, key=f"limit_{p.id}", step=10000)
                 if nl != p.token_limit_weekly: 
-                    p.token_limit_weekly = nl; db.commit()
-                    db.close() # SECU
+                    p.token_limit_weekly = nl
+                    db.commit()
+                    db.close() # Sécurité avant rechargement
                     st.rerun()
 
-# --- SÉCURITÉ ABSOLUE CONTRE LES FUITES DE CONNEXIONS ---
+# --- BLOC DE SÉCURITÉ FINAL (ANTI-FUITE DE MÉMOIRE) ---
+# Ce bloc garantit que la connexion à la base de données est TOUJOURS fermée, 
+# même si le script plante ou si Streamlit force un rechargement.
 finally:
     db.close()
