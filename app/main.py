@@ -38,7 +38,7 @@ def manage_token_resets(profile, db):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_exchange_rates():
-    try: return requests.get("[https://open.er-api.com/v6/latest/EUR](https://open.er-api.com/v6/latest/EUR)", timeout=3).json().get("rates", {"EUR": 1.0, "CHF": 0.98, "USD": 1.08})
+    try: return requests.get("https://open.er-api.com/v6/latest/EUR", timeout=3).json().get("rates", {"EUR": 1.0, "CHF": 0.98, "USD": 1.08})
     except: return {"EUR": 1.0, "CHF": 0.98, "USD": 1.08}
 
 rates = get_exchange_rates()
@@ -69,7 +69,7 @@ try:
 
     # --- SIDEBAR ---
     with st.sidebar:
-        st.title("🌌 Aura Pro v6.0")
+        st.title("🌌 Aura Pro v6.1")
         st.write(f"Utilisateur : **{user['username']}**")
         menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
         
@@ -137,18 +137,21 @@ try:
         
         tab_import, tab_manual, tab_manage = st.tabs(["📥 Import PDF (IA)", "✍️ Saisie Manuelle (Livrets)", "📂 Gérer mes comptes"])
         
-        # ONGLET 1 : IMPORT IA (Logique fluide sans state complexes)
+        # ONGLET 1 : IMPORT IA 
         with tab_import:
             st.info("Glissez votre relevé PDF (Assurance Vie, PEA, Amundi, Natixis...).")
             up_file = st.file_uploader("Fichier PDF", type="pdf", label_visibility="collapsed")
             
             if up_file:
-                file_key = f"pdf_{up_file.name}"
+                file_key = f"pdf_{up_file.file_id}"
                 
-                # 1. Analyse IA si pas encore fait
+                # 1. Analyse IA
                 if file_key not in st.session_state and f"done_{file_key}" not in st.session_state:
                     with st.spinner("🔮 L'IA lit votre document en profondeur... (Regardez les logs TrueNAS)"):
-                        t_path = f"/tmp/{up_file.name}"
+                        
+                        # CORRECTION MAJEURE ICI : On utilise le file_id au lieu du nom du fichier
+                        # Cela évite le crash si le nom du fichier contient des accents (ex: "Relevé.pdf")
+                        t_path = f"/tmp/{up_file.file_id}.pdf" 
                         open(t_path, "wb").write(up_file.getvalue())
                         
                         res = check_quota_and_parse(t_path, os.getenv("GEMINI_API_KEY"))
@@ -228,6 +231,7 @@ try:
                                 
                                 st.session_state[f"done_{file_key}"] = True
                                 del st.session_state[file_key]
+                                db.close() # SECU
                                 st.rerun()
                                 
                             except Exception as err:
@@ -260,6 +264,7 @@ try:
                         db.add(Record(account_id=exist_m.id, date_releve=m_date, total_value=m_val, total_invested=m_val, fonds_euro_value=m_val))
                         db.commit()
                         st.success(f"{m_type} enregistré !")
+                        db.close() # SECU
                         st.rerun()
                     else:
                         st.error("Veuillez renseigner le nom de la banque.")
@@ -274,7 +279,9 @@ try:
                     c_info, c_del = st.columns([0.8, 0.2])
                     c_info.write(f"Capital Actuel : **{acc.total_invested:,.2f} {acc.currency}**")
                     if c_del.button("🗑️ Supprimer", key=f"del_acc_{acc.id}"): 
-                        db.delete(acc); db.commit(); st.rerun()
+                        db.delete(acc); db.commit()
+                        db.close() # SECU
+                        st.rerun()
                     if acc.records: render_account_history(acc.records)
 
     # --- PAGE : EXPORT ---
@@ -302,6 +309,7 @@ try:
             u_path = f"/app/storage/{user['username']}"
             if os.path.exists(u_path): shutil.rmtree(u_path)
             db.commit()
+            db.close() # SECU
             st.rerun()
 
     # --- PAGE : ADMIN ---
@@ -323,6 +331,7 @@ try:
                 nl = c4.number_input("Quota", value=p.token_limit_weekly, key=f"l_{p.id}", step=10000)
                 if nl != p.token_limit_weekly: 
                     p.token_limit_weekly = nl; db.commit()
+                    db.close() # SECU
                     st.rerun()
 
 # --- SÉCURITÉ ABSOLUE CONTRE LES FUITES DE CONNEXIONS ---
