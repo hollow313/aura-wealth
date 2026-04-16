@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from database import Account, Record
 from utils import convert_to_eur, get_multi_currency_caption
-from modules.charts import render_patrimoine_chart, render_allocation_chart, render_treemap_allocation
+from modules.charts import render_patrimoine_chart, render_allocation_chart
 
 def render_dashboard(user, profile, db):
     st.header("📈 Dashboard Patrimonial")
@@ -59,14 +59,11 @@ def render_dashboard(user, profile, db):
 
     st.divider()
     
-    # NOUVELLE VUE : Camembert + Treemap + Allocation
-    c_l, c_m, c_r = st.columns(3)
+    # Retour à un affichage propre sans treemap
+    c_l, c_r = st.columns(2)
     with c_l: 
         st.subheader("Répartition par Compte")
         render_patrimoine_chart(accounts)
-    with c_m: 
-        st.subheader("Carte des Actifs (Treemap)")
-        render_treemap_allocation(accounts)
     with c_r: 
         st.subheader("Sécurité vs Risque")
         render_allocation_chart(total_euro_eur, total_uc_eur)
