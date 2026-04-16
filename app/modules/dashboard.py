@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 from database import Account, Record
 from utils import convert_to_eur, get_multi_currency_caption
-from modules.charts import render_patrimoine_chart, render_allocation_chart
+from modules.charts import render_patrimoine_chart, render_allocation_chart, render_treemap_allocation
 
 def render_dashboard(user, profile, db):
     st.header("📈 Dashboard Patrimonial")
     accounts = db.query(Account).filter_by(user_id=user["username"]).all()
     
     if not accounts:
-        st.info("👋 Bienvenue ! Ajoutez vos premiers investissements dans l'onglet **Patrimoine & PDF**.")
+        st.info("👋 Bienvenue ! Ajoutez vos premiers investissements dans l'onglet **💳 Patrimoine & PDF**.")
         return
 
     total_inv_eur, total_val_eur, total_euro_eur, total_uc_eur, total_div_eur = 0, 0, 0, 0, 0
@@ -58,9 +58,20 @@ def render_dashboard(user, profile, db):
     if sub_div := get_multi_currency_caption(total_div_eur, profile.active_currencies): k4.caption(sub_div)
 
     st.divider()
-    c_l, c_r = st.columns(2)
-    with c_l: render_patrimoine_chart(accounts)
-    with c_r: render_allocation_chart(total_euro_eur, total_uc_eur)
+    
+    # NOUVELLE VUE : Camembert + Treemap + Allocation
+    c_l, c_m, c_r = st.columns(3)
+    with c_l: 
+        st.subheader("Répartition par Compte")
+        render_patrimoine_chart(accounts)
+    with c_m: 
+        st.subheader("Carte des Actifs (Treemap)")
+        render_treemap_allocation(accounts)
+    with c_r: 
+        st.subheader("Sécurité vs Risque")
+        render_allocation_chart(total_euro_eur, total_uc_eur)
+    
+    st.divider()
     
     st.subheader("📋 Résumé des Portefeuilles")
     st.dataframe(pd.DataFrame(perf_summary), hide_index=True, use_container_width=True)
