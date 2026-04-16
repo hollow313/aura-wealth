@@ -3,20 +3,19 @@ import time
 import logging
 from google import genai
 
-# Configuration du logger
+# Configuration pour forcer l'affichage dans la console Docker/TrueNAS
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def check_quota_and_parse(pdf_path, api_key):
     try:
-        # On évite d'afficher le chemin complet au cas où il resterait des caractères spéciaux
-        logger.info("🚀 [AURA] Démarrage de l'analyse IA du document...")
+        logger.info(f"🚀 [AURA] Démarrage de l'analyse IA : {pdf_path}")
         client = genai.Client(api_key=api_key)
         
         logger.info("🚀 [AURA] Upload du document vers Gemini...")
         file_upload = client.files.upload(file=pdf_path)
         
-        logger.info("🚀 [AURA] Document uploadé. Pause de 5 secondes...")
+        logger.info("🚀 [AURA] Document uploadé. Pause de 5 secondes pour stabilisation...")
         time.sleep(5) 
         
         prompt = """
@@ -24,11 +23,14 @@ def check_quota_and_parse(pdf_path, api_key):
 
         RÈGLES D'EXTRACTION FINANCIÈRE (TRÈS IMPORTANT) :
         1. "total_invested" (Capital Versé) : Cherche "Total versé depuis l'origine". SI ABSENT (notamment sur les relevés 2020/2021), va dans la section 'Fiscalité' ou 'Informations Fiscales' et prends le montant du "Cumul des primes versées". Si Epargne salariale, prends les versements nets/contributions.
-        2. "dividends" : Si c'est de l'épargne salariale (Amundi/Natixis), additionne l'"Intéressement", la "Participation" et l'"Abondement" de l'année.
+        2. "dividends" (Primes & Intéressement) : 
+           - Chez AMUNDI : Cherche la ligne "Contributions de votre entreprise", "Intéressement et/ou Participation net directement perçu" ou "Abondement".
+           - Chez NATIXIS : Cherche dans le tableau des opérations de l'année les lignes "Intéressement", "Participation" et "Abondement".
+           - Additionne TOUTES ces primes de l'entreprise et mets le total ici. Si absent, mets 0.0.
         3. "fonds_euro_value" : Somme des fonds sécurisés (Eurossima, Netissima, Fonds en euros).
         4. "uc_value" : Somme des Unités de Compte, actions, ETF.
         5. "positions" : Liste CHAQUE actif présent avec sa quantité et son prix unitaire.
-        6. S'il y a un PEG et un PER sur le même document, fusionne le tout dans total_value.
+        6. S'il y a un PEG et un PER sur le même document, fusionne le tout dans 'total_value'.
 
         FORMAT JSON REQUIS :
         {
@@ -59,7 +61,7 @@ def check_quota_and_parse(pdf_path, api_key):
         usage = response.usage_metadata.total_token_count if hasattr(response, 'usage_metadata') else 0
         raw_text = response.text.strip()
         
-        # Nettoyage robuste du Markdown
+        # Nettoyage robuste du Markdown (```json ... ```)
         if "```json" in raw_text:
             raw_text = raw_text.split("```json")[1]
         elif "```" in raw_text:
@@ -92,4 +94,4 @@ def check_quota_and_parse(pdf_path, api_key):
         return {"error": "L'IA a renvoyé des données mal formatées. Réessayez."}
     except Exception as e:
         logger.error(f"❌ [AURA CRASH] Erreur critique : {str(e)}")
-        return {"error": f"Erreur IA : {str(e)}"}
+        return {"error": f"Erreur système IA : {str(e)}"}
