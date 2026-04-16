@@ -1,13 +1,16 @@
-import json, time, logging
+import json
+import time
+import logging
 from google import genai
 
-# Configuration pour forcer l'affichage dans la console Docker/TrueNAS
+# Configuration du logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def check_quota_and_parse(pdf_path, api_key):
     try:
-        logger.info(f"🚀 [AURA] Démarrage de l'analyse IA : {pdf_path}")
+        # On évite d'afficher le chemin complet au cas où il resterait des caractères spéciaux
+        logger.info("🚀 [AURA] Démarrage de l'analyse IA du document...")
         client = genai.Client(api_key=api_key)
         
         logger.info("🚀 [AURA] Upload du document vers Gemini...")
@@ -56,34 +59,37 @@ def check_quota_and_parse(pdf_path, api_key):
         usage = response.usage_metadata.total_token_count if hasattr(response, 'usage_metadata') else 0
         raw_text = response.text.strip()
         
-        # Nettoyage Markdown
-        if raw_text.startswith("```json"): 
-            raw_text = raw_text[7:]
-        elif raw_text.startswith("```"): 
-            raw_text = raw_text[3:]
-        
-        if raw_text.endswith("```"): 
-            raw_text = raw_text[:-3]
+        # Nettoyage robuste du Markdown
+        if "```json" in raw_text:
+            raw_text = raw_text.split("```json")[1]
+        elif "```" in raw_text:
+            raw_text = raw_text.split("```")[1]
+            
+        if "```" in raw_text:
+            raw_text = raw_text.split("```")[0]
             
         raw_text = raw_text.strip()
         
-        start, end = raw_text.find('{'), raw_text.rfind('}') + 1
+        start = raw_text.find('{')
+        end = raw_text.rfind('}') + 1
         
         if start == -1:
-            logger.error("❌ [AURA ERROR] Impossible de trouver du JSON dans la réponse.")
+            logger.error("❌ [AURA ERROR] JSON introuvable dans la réponse de l'IA.")
             return {"error": "L'IA n'a pas pu structurer la réponse."}
             
         data = json.loads(raw_text[start:end])
         data['tokens'] = usage
-        if not data.get('currency'): data['currency'] = "EUR"
-        if not data.get('positions'): data['positions'] = []
+        if not data.get('currency'): 
+            data['currency'] = "EUR"
+        if not data.get('positions'): 
+            data['positions'] = []
         
         logger.info("✅ [AURA] Analyse IA terminée avec succès !")
         return data
         
     except json.JSONDecodeError as e:
-        logger.error(f"❌ [AURA CRASH] Erreur de formatage JSON : {str(e)}\nTexte brut reçu : {raw_text}")
-        return {"error": "L'IA a renvoyé des données mal formatées. Veuillez réessayer."}
+        logger.error(f"❌ [AURA CRASH] Erreur de formatage JSON. Texte brut: {raw_text}")
+        return {"error": "L'IA a renvoyé des données mal formatées. Réessayez."}
     except Exception as e:
         logger.error(f"❌ [AURA CRASH] Erreur critique : {str(e)}")
-        return {"error": f"Erreur système IA : {str(e)}"}
+        return {"error": f"Erreur IA : {str(e)}"}
