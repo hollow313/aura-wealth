@@ -3,16 +3,23 @@ import requests
 from datetime import datetime
 
 def safe_float(value):
-    """Convertit proprement les valeurs en nombres flottants (évite les crashs DB)"""
+    """Convertit proprement les montants français en float (gère les espaces et les points des milliers)"""
     try:
         if pd.isna(value) or value is None or value == "": return 0.0
         if isinstance(value, str):
-            value = value.replace('€', '').replace(' ', '').replace(',', '.')
+            # 1. On retire les espaces insécables ou normaux (séparateurs de milliers français)
+            value = value.replace('\xa0', '').replace(' ', '').replace('€', '')
+            # 2. Si on a un point ET une virgule (ex: 1.200,50), le point est un séparateur de milliers
+            if '.' in value and ',' in value:
+                value = value.replace('.', '') # On supprime le point des milliers
+                value = value.replace(',', '.') # On transforme la virgule décimale en point
+            # 3. S'il n'y a qu'une virgule (ex: 1200,50), on la remplace par un point
+            elif ',' in value:
+                value = value.replace(',', '.')
         return float(value)
     except: return 0.0
 
 def manage_token_resets(profile, db):
-    """Gère le reset automatique des quotas IA (Jour/Semaine)"""
     today = datetime.now().date()
     current_week = today.isocalendar()[1]
     updated = False
@@ -64,15 +71,16 @@ def categorize_transaction(label, amount):
         if any(k in lbl for k in ["SALA", "PAIE", "REMUNERATION"]): return "Salaire"
         if any(k in lbl for k in ["WILLIS", "CPAM", "MUTUELLE", "REMB", "SECU"]): return "Remboursement Santé"
         if any(k in lbl for k in ["CAF", "IMPOT", "TRESOR"]): return "Aides & Impôts"
+        if any(k in lbl for k in ["VIR", "VIREMENT"]): return "Virement Entrant"
         return "Revenus (Autre)"
     else:
         if any(k in lbl for k in ["AMAZON", "PAYPAL", "CDISCOUNT", "FNAC", "ALIEXPRESS"]): return "Achats & E-commerce"
-        if any(k in lbl for k in ["AUCHAN", "CARREFOUR", "LECLERC", "INTERMARCHE", "LIDL", "ALDI", "MONOPRIX", "U EXPR"]): return "Alimentation & Supermarché"
+        if any(k in lbl for k in ["AUCHAN", "CARREFOUR", "LECLERC", "INTERMARCHE", "LIDL", "ALDI", "MONOPRIX", "U EXPR", "SUPER U"]): return "Alimentation & Supermarché"
         if any(k in lbl for k in ["ASSURANCE", "ALLIANZ", "AXA", "MACIF", "MAAF", "MATMUT", "DIRECT ASS", "PACIFICA"]): return "Assurances"
         if any(k in lbl for k in ["TOTAL", "ESSO", "SHELL", "STATION", "PEAGE", "SNCF", "UBER", "VINCI"]): return "Transport & Auto"
         if any(k in lbl for k in ["EDF", "ENGIE", "ENI", "EAU", "VEOLIA", "SUEZ"]): return "Logement & Énergies"
         if any(k in lbl for k in ["ORANGE", "FREE", "BOUYGUES", "SFR", "NETFLIX", "SPOTIFY", "APPLE"]): return "Abonnements & Télécom"
-        if any(k in lbl for k in ["PHARMACIE", "MEDECIN", "HOPITAL", "CLINIQUE", "LABO"]): return "Santé"
-        if any(k in lbl for k in ["RESTAURANT", "UBER EATS", "DELIVEROO", "MCDO", "KFC", "BURGER KING", "BAKERY"]): return "Restaurants & Sorties"
+        if any(k in lbl for k in ["PHARMACIE", "MEDECIN", "HOPITAL", "CLINIQUE", "LABO", "DOCTOLIB"]): return "Santé"
+        if any(k in lbl for k in ["RESTAURANT", "UBER EATS", "DELIVEROO", "MCDO", "KFC", "BURGER KING", "BAKERY", "BOULANGERIE", "CREPERIE"]): return "Restaurants & Sorties"
         if any(k in lbl for k in ["RETRAIT", "DAB", "DISTRIBUTEUR"]): return "Retraits Espèces"
         return "Dépenses (Autre)"
