@@ -47,6 +47,16 @@ def convert_to_eur(amount, currency):
     rate = rates.get(currency.upper(), 1.0)
     return amount / rate if rate > 0 else amount
 
+def get_multi_currency_caption(amount_eur, active_currencies):
+    """Génère la chaîne de caractères pour les devises secondaires (ex: ≈ 980 CHF / ≈ 1080 USD)"""
+    currs = [c.strip() for c in active_currencies.split(",") if c.strip() and c.strip() != "EUR"]
+    if not currs: return ""
+    res = []
+    for c in currs:
+        rate = rates.get(c, 1.0)
+        res.append(f"≈ {amount_eur * rate:,.0f} {c}")
+    return " | ".join(res)
+
 # --- INITIALISATION DB ---
 try: migrate() 
 except: pass
@@ -68,7 +78,7 @@ try:
 
     # --- SIDEBAR ---
     with st.sidebar:
-        st.title("🌌 Aura Pro v8.1")
+        st.title("🌌 Aura Pro")
         st.write(f"Utilisateur : **{user['username']}**")
         menu = st.radio("Navigation", ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres", "🛡️ Admin"] if user["is_admin"] else ["🌍 Dashboard", "💳 Mes Comptes", "📑 Export", "⚙️ Paramètres"])
         
@@ -97,7 +107,6 @@ try:
                     euro_val = (last_r.total_value or 0) if a.is_manual else (last_r.fonds_euro_value or 0)
                     total_euro_eur += convert_to_eur(euro_val, a.currency)
                     total_uc_eur += convert_to_eur(last_r.uc_value or 0, a.currency)
-                    
                     total_div_eur += convert_to_eur(sum(r.dividends for r in a.records if r.dividends), a.currency)
                     
                     inv_natif = last_r.total_invested or 0
@@ -116,12 +125,25 @@ try:
                     for pos in last_r.positions:
                         all_positions.append({"Compte": a.bank_name, "Actif": pos.name, "Type": pos.asset_type, "Quantité": pos.quantity, "Valeur": f"{pos.total_value:,.2f} {a.currency}"})
 
+            # AFFICHAGE DES KPIS AVEC CONVERSION MULTI-DEVISES
             k1, k2, k3, k4 = st.columns(4)
+            
             k1.metric("Capital Versé Global", f"{total_inv_eur:,.0f} €")
+            if sub_inv := get_multi_currency_caption(total_inv_eur, profile.active_currencies):
+                k1.caption(sub_inv)
+                
             k2.metric("Valeur Marché Globale", f"{total_val_eur:,.2f} €")
+            if sub_val := get_multi_currency_caption(total_val_eur, profile.active_currencies):
+                k2.caption(sub_val)
+                
             gain_tot = total_val_eur - total_inv_eur
             k3.metric("Plus-Value Nette", f"{gain_tot:+.2f} €", f"{(gain_tot/total_inv_eur*100):+.2f}%" if total_inv_eur > 0 else "0%")
-            k4.metric("Primes / Intéressement", f"{total_div_eur:,.2f} €")
+            if sub_gain := get_multi_currency_caption(gain_tot, profile.active_currencies):
+                k3.caption(sub_gain)
+                
+            k4.metric("Primes / Dividendes", f"{total_div_eur:,.2f} €")
+            if sub_div := get_multi_currency_caption(total_div_eur, profile.active_currencies):
+                k4.caption(sub_div)
 
             st.divider()
             c_l, c_r = st.columns(2)
@@ -147,10 +169,8 @@ try:
             up_file = st.file_uploader("Fichier PDF", type="pdf", label_visibility="collapsed")
             
             if up_file:
-                # IMPORTANT : On utilise up_file.file_id pour éviter le crash des accents dans le nom du fichier
                 file_key = f"pdf_{up_file.file_id}"
                 
-                # 1. Analyse IA
                 if file_key not in st.session_state and f"done_{file_key}" not in st.session_state:
                     with st.status("🔮 L'IA lit votre document en profondeur...", expanded=True) as status:
                         t_path = f"/tmp/{up_file.file_id}.pdf"
@@ -167,10 +187,9 @@ try:
                             st.session_state[file_key] = res
                             st.session_state[f"path_{file_key}"] = t_path
                             status.update(label="✅ Analyse terminée !", state="complete")
-                            db.close() # On ferme avant le rerun pour éviter la fuite
+                            db.close()
                             st.rerun()
 
-                # 2. Formulaire de validation
                 elif isinstance(st.session_state.get(file_key), dict):
                     res = st.session_state[file_key]
                     
@@ -189,7 +208,7 @@ try:
                         e_inv = c5.number_input("Capital Versé (ou Versements)", value=safe_float(res.get("total_invested")), step=10.0)
                         e_type = c6.text_input("Type de compte", value=res.get("account_type", ""))
                         
-                        e_div = st.number_input("Primes / Intéressement / Abondement détectés", value=safe_float(res.get("dividends")), step=10.0)
+                        e_div = st.number_input("Primes / Dividendes / Intéressement détectés", value=safe_float(res.get("dividends")), step=10.0)
                         
                         with st.expander("Voir le détail brut des actifs détectés"):
                             st.json(res.get("positions", []))
@@ -241,14 +260,13 @@ try:
                                 
                                 st.session_state[f"done_{file_key}"] = True
                                 del st.session_state[file_key]
-                                db.close() # Sécurité avant rerun
+                                db.close()
                                 st.rerun()
                                 
                             except Exception as err:
                                 db.rollback()
                                 st.error(f"❌ Erreur lors de l'enregistrement en base de données : {err}")
                 
-                # Phase 3 : Succès
                 elif f"done_{file_key}" in st.session_state:
                     st.success("✅ Document importé et sauvegardé avec succès ! Fermez le fichier (croix rouge) pour en ajouter un autre.")
 
@@ -277,9 +295,7 @@ try:
                         db.commit()
                         
                         st.toast(f"✅ {m_type} de {m_bank} mis à jour avec succès !", icon="💾")
-                        st.success(f"Le compte {m_type} de {m_bank} a bien été enregistré avec un solde de {m_val} €.")
-                        
-                        # Note: Pas de st.rerun ici pour laisser le message s'afficher à l'utilisateur
+                        st.success(f"Le compte {m_type} de {m_bank} a bien été enregistré avec un solde de {m_val:,.2f} €.")
                     else:
                         st.error("Veuillez renseigner le nom de la banque.")
 
@@ -296,7 +312,7 @@ try:
                     
                     if c_del.button("🗑️ Supprimer ce compte", key=f"del_acc_{acc.id}"): 
                         db.delete(acc); db.commit()
-                        db.close() # Sécurité avant rerun
+                        db.close()
                         st.rerun()
                     
                     if acc.records: 
@@ -323,7 +339,7 @@ try:
                             "Capital Versé": r.total_invested,
                             "Valeur Fonds Euros": r.fonds_euro_value,
                             "Valeur Unités Compte": r.uc_value,
-                            "Primes / Intéressement": r.dividends
+                            "Primes / Dividendes / Intéressement": r.dividends
                         })
                 st.download_button("📥 Télécharger le fichier CSV", pd.DataFrame(data).to_csv(index=False), "export_patrimoine_complet.csv")
         else:
@@ -337,6 +353,7 @@ try:
             st.subheader("💱 Devises affichées")
             curr = profile.active_currencies.split(",") if profile.active_currencies else ["EUR"]
             sel_c = st.multiselect("Sélectionnez les devises que vous utilisez", ["EUR", "CHF", "USD", "GBP", "CAD"], default=curr)
+            st.caption("La devise principale reste l'Euro. Les autres devises s'afficheront en petit sous vos compteurs globaux dans le Dashboard.")
             
             st.divider()
             st.subheader("🔔 Notifications")
@@ -365,7 +382,7 @@ try:
                         shutil.rmtree(u_path)
                     
                     db.commit()
-                    db.close() # Sécurité avant rerun
+                    db.close()
                     st.rerun()
 
     # --- PAGE : ADMIN ---
@@ -392,7 +409,7 @@ try:
                 if nl != p.token_limit_weekly: 
                     p.token_limit_weekly = nl
                     db.commit()
-                    db.close() # Sécurité avant rerun
+                    db.close()
                     st.rerun()
 
 # --- BLOC DE SÉCURITÉ FINAL (ANTI-FUITE DE CONNEXIONS) ---
