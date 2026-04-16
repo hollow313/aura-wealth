@@ -21,7 +21,6 @@ class UserProfile(Base):
     notify_discord = Column(Boolean, default=False)
     discord_webhook = Column(Text, nullable=True)
 
-# --- TABLES PATRIMOINE (PDF & Investissements) ---
 class Account(Base):
     __tablename__ = 'accounts'
     id = Column(Integer, primary_key=True)
@@ -62,7 +61,7 @@ class Position(Base):
     total_value = Column(Float, default=0.0)
     record = relationship("Record", back_populates="positions")
 
-# --- TABLES BUDGET & COMPTES COURANTS (CSV) ---
+# --- NOUVELLES TABLES BUDGET (CSV) ---
 class BankAccount(Base):
     __tablename__ = 'bank_accounts'
     id = Column(Integer, primary_key=True)
@@ -76,11 +75,17 @@ class BankTransaction(Base):
     id = Column(Integer, primary_key=True)
     account_id = Column(Integer, ForeignKey('bank_accounts.id'))
     date = Column(Date)
-    value_date = Column(Date, nullable=True)
     amount = Column(Float)
     label = Column(String)
     balance = Column(Float, nullable=True)
     category = Column(String, default="Autre")
     account = relationship("BankAccount", back_populates="transactions")
+
+class CategoryRule(Base):
+    __tablename__ = 'category_rules'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, index=True)
+    category_name = Column(String)
+    keywords = Column(Text) # Mots-clés séparés par des virgules (ex: "AMAZON, PAYPAL, CDISCOUNT")
 
 Base.metadata.create_all(bind=engine)
