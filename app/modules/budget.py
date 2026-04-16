@@ -4,7 +4,7 @@ import io
 from datetime import datetime
 from database import BankAccount, BankTransaction
 from utils import safe_float, categorize_transaction
-from modules.charts import render_budget_pie, render_balance_history
+from modules.charts import render_budget_pie, render_balance_history, render_expenses_bar_chart
 
 def render_budget(user, profile, db):
     st.header("💸 Gestion du Quotidien (Import CSV)")
@@ -21,21 +21,42 @@ def render_budget(user, profile, db):
             for ba in bank_accounts: all_tx.extend(ba.transactions)
             
             if all_tx:
+                # NOUVEAUX INDICATEURS (KPIs)
+                total_in = sum(t.amount for t in all_tx if t.amount > 0)
+                total_out = sum(t.amount for t in all_tx if t.amount < 0)
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("🟢 Total des Entrées", f"{total_in:,.2f} €")
+                col2.metric("🔴 Total des Dépenses", f"{abs(total_out):,.2f} €")
+                col3.metric("⚖️ Balance Nette du compte", f"{(total_in + total_out):,.2f} €")
+                
+                st.divider()
+                
                 c_left, c_right = st.columns(2)
                 with c_left:
-                    st.subheader("Où va mon argent ?")
+                    st.subheader("Répartition des Dépenses")
                     render_budget_pie(all_tx)
+                    st.subheader("Top Catégories (Classement)")
+                    render_expenses_bar_chart(all_tx)
                 with c_right:
                     st.subheader("Évolution du Solde")
                     render_balance_history(all_tx)
                 
                 st.divider()
                 st.subheader("Historique des transactions")
+                
                 df_tx = pd.DataFrame([{
                     "Compte": t.account.account_name, "Date": t.date, "Libellé": t.label,
                     "Catégorie": t.category, "Montant (€)": t.amount, "Solde": t.balance
                 } for t in all_tx]).sort_values("Date", ascending=False)
-                st.dataframe(df_tx, hide_index=True, use_container_width=True)
+                
+                # Coloration des montants en vert ou rouge
+                def color_amount(val):
+                    color = '#10b981' if val > 0 else '#ef4444'
+                    return f'color: {color}; font-weight: bold'
+                
+                styled_df = df_tx.style.applymap(color_amount, subset=['Montant (€)']).format({'Montant (€)': "{:.2f} €", 'Solde': "{:.2f} €"})
+                st.dataframe(styled_df, hide_index=True, use_container_width=True)
 
     # --- IMPORT CSV ---
     with t_import:
